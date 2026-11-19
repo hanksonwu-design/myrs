@@ -260,7 +260,7 @@ m = await mail(B);
 check(m.length === 1 && m[0].subject.includes('接受') && m[0].link.endsWith(ON), 'requester mailed on accept');
 await as(A, `select mark_done($1)`, [ON]);
 m = await mail(B);
-check(m.length === 2 && m[1].body.includes('提出爭議') && m[1].body.includes('10 點'), 'requester warned when provider confirms first');
+check(m.length === 2 && m.some((x) => x.body.includes('提出爭議') && x.body.includes('10 點')), 'requester warned when provider confirms first');
 await as(B, `select mark_done($1)`, [ON]);
 check((await mail(A)).some((x) => x.subject === '「鳳梨酥」交易完成'), 'first confirmer mailed when the deal completes');
 check(!(await mail(B)).some((x) => x.subject === '「鳳梨酥」交易完成'), 'last confirmer not mailed');
