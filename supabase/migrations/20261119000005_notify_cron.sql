@@ -12,7 +12,9 @@ select cron.schedule('myrs-send-notifications', '* * * * *', $$
   select net.http_post(
     url := 'https://mpswtcvwxuhtmwmbwocu.supabase.co/functions/v1/send-notifications',
     headers := '{"Content-Type": "application/json"}'::jsonb,
-    body := '{}'::jsonb
+    body := '{}'::jsonb,
+    -- A cold start plus a batch of mail takes longer than the 5 s default.
+    timeout_milliseconds := 30000
   )
   where exists (select 1 from public.notifications where sent_at is null and attempts < 5)
 $$);
