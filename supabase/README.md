@@ -39,15 +39,18 @@ anon / publishable key 本來就會放在網頁裡，可以公開。**service_ro
 
 **URL Configuration**
 
-- **Site URL** 填網站網址。開發時是 `http://localhost:3000`，上線後改成正式網址。
-- **Redirect URLs** 加入 `http://localhost:3000/login` 和正式網址的 `/login`。
+- **Site URL** 填正式網址，例如 GitHub Pages 的 `https://hanksonwu-design.github.io/myrs/`。
+- **Redirect URLs** 加入正式網址的 `/login`（例如 `https://hanksonwu-design.github.io/myrs/login`）和開發用的 `http://localhost:3000/login`。
 
 **Email 登入（預設就能用）**
 
-- 到 **Email Templates**，在「Magic Link」和「Confirm signup」兩個範本裡加上 `{{ .Token }}`，信裡才會有 6 位數驗證碼。
-  - 例如：`<p>你的 Myrs 驗證碼：<b>{{ .Token }}</b></p>`
+- 到 **Emails** 的範本，在「Magic Link」和「Confirm signup」兩個範本裡加上 `{{ .Token }}`，信裡才會有驗證碼。現成的中文範本在 [email-templates.md](email-templates.md)。
   - 沒改範本也能登入：用同一個瀏覽器點信中的連結即可。
-- Supabase 內建的寄信服務每小時只能寄很少封，只適合測試。試點前請到 **SMTP Settings** 接自己的寄信服務（例如 Resend、SendGrid）。
+- Supabase 內建的寄信服務只會寄給專案成員（你自己），而且每小時只能寄幾封，只適合測試。要讓別人登入，請到 **SMTP Settings** 接自己的寄信服務：
+  - **Gmail**（不用網域）：Host `smtp.gmail.com`、Port `465`、Username 和寄件信箱都填那個 Gmail、Password 填 Google 的「應用程式密碼」（要先開兩步驟驗證）。每天約可寄 500 封。
+  - 有自己的網域時可以改用 Resend、SendGrid 等寄信服務。
+  - 接好後到 **Rate Limits** 調高每小時可寄的信件數（試點設 100）。
+- 驗證碼長度看 **Providers → Email → Email OTP length**（目前 8 位數）。登入頁收 6～8 位數都可以。
 
 **手機簡訊登入（文件規劃的正式方式）**
 
