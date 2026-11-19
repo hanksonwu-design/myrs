@@ -66,6 +66,7 @@ const SETTINGS_COLUMNS: Record<keyof Settings, string> = {
   reviewWindowDays: 'review_window_days',
   reportHideThreshold: 'report_hide_threshold',
   rewardExpiryMonths: 'reward_expiry_months',
+  acceptTimeoutDays: 'accept_timeout_days',
 };
 
 function toSettings(r: Row | undefined): Settings {

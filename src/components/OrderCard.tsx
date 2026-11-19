@@ -49,7 +49,10 @@ export function OrderCard({ d, order: o, viewerId, inChat }: { d: DB; order: Ord
   } else if (o.status === 'accepted') {
     if (myDone && !otherDone) hint = `你已確認完成，對方 ${hoursLeft(myDone + s.autoCompleteHours * HOUR, now)}內沒回應會自動完成`;
     else if (otherDone && !myDone) hint = '對方已確認完成，面交沒問題的話請按「面交完成」';
-    else hint = '面交後，雙方都按「面交完成」';
+    else if (s.acceptTimeoutDays > 0 && o.acceptedAt) {
+      const left = Math.max(0, Math.ceil((o.acceptedAt + s.acceptTimeoutDays * 24 * HOUR - now) / (24 * HOUR)));
+      hint = `面交後，雙方都按「面交完成」；${left} 天內都沒人確認會自動取消並退點`;
+    } else hint = '面交後，雙方都按「面交完成」';
   } else if (o.status === 'disputed') hint = '管理員處理中，點數暫時維持凍結';
   else if (o.status === 'cancelled') hint = o.cancelReason;
   else if (o.status === 'completed') hint = canReview ? `完成後 ${s.reviewWindowDays} 天內可以評價` : reviewed ? '你已評價' : '';

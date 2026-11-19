@@ -518,6 +518,7 @@ const SETTING_FIELDS: { key: keyof Settings; label: string; unit: string }[] = [
   { key: 'newAccountPointsCap', label: '新帳號點數交易上限', unit: '點' },
   { key: 'requestTimeoutHours', label: '索取逾時自動取消', unit: '小時' },
   { key: 'autoCompleteHours', label: '單方確認後自動完成', unit: '小時' },
+  { key: 'acceptTimeoutDays', label: '接受後都沒人確認，自動取消', unit: '天（0 = 不取消）' },
   { key: 'reviewWindowDays', label: '評價期限', unit: '天' },
   { key: 'reportHideThreshold', label: '檢舉幾人自動隱藏', unit: '人' },
 ];

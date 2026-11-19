@@ -13,7 +13,7 @@
 import { useSyncExternalStore } from 'react';
 import { IS_REMOTE } from './backend';
 import { remoteActions, remoteSnapshot, startRemote } from './remote';
-import { calcFee, findBannedWords, PHONE_RE } from './rules';
+import { calcFee, DEFAULT_SETTINGS, findBannedWords, PHONE_RE } from './rules';
 import { createSeed, DB_VERSION } from './seed';
 import { DAY, HOUR, ymdLocal } from './format';
 import type {
@@ -53,7 +53,8 @@ function load(): DB {
     const raw = window.localStorage.getItem(KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as DB;
-      if (parsed && parsed.version === DB_VERSION) return parsed;
+      // Settings added later get their defaults.
+      if (parsed && parsed.version === DB_VERSION) return { ...parsed, settings: { ...DEFAULT_SETTINGS, ...parsed.settings } };
     }
   } catch {
     /* fall through to a fresh seed */
@@ -343,6 +344,9 @@ function runMaintenance(d: DB): boolean {
       if (one && !both && t - one > s.autoCompleteHours * HOUR) {
         completeOrder(d, o, `對方 ${s.autoCompleteHours} 小時內沒有回應，交易自動完成。`);
         changed = true;
+      } else if (!one && s.acceptTimeoutDays > 0 && t - (o.acceptedAt ?? t) > s.acceptTimeoutDays * DAY) {
+        cancelOrder(d, o, `接受後 ${s.acceptTimeoutDays} 天都沒有人確認完成，自動取消`);
+        changed = true;
       }
     }
   }
@@ -489,7 +493,7 @@ const localActions = {
       const u = requireUser(d);
       if ('error' in u) return fail(u.error);
       for (const o of d.orders) {
-        if (isParty(o, u.id) && (o.status === 'requested' || o.status === 'accepted')) {
+        if (isParty(o, u.id) && OPEN_STATUSES.includes(o.status)) {
           cancelOrder(d, o, '對方已刪除帳號');
         }
       }
@@ -825,7 +829,7 @@ const localActions = {
       if (!l) return fail('找不到這則刊登');
       if (status === 'removed') {
         for (const o of d.orders) {
-          if (o.listingId === l.id && (o.status === 'requested' || o.status === 'accepted')) {
+          if (o.listingId === l.id && OPEN_STATUSES.includes(o.status)) {
             cancelOrder(d, o, '刊登已被管理員下架');
           }
         }
@@ -861,7 +865,7 @@ const localActions = {
         const l = r.targetType === 'listing' ? listingById(d, r.targetId) : null;
         if (!l) return fail('檢舉對象不是刊登');
         for (const o of d.orders) {
-          if (o.listingId === l.id && (o.status === 'requested' || o.status === 'accepted')) {
+          if (o.listingId === l.id && OPEN_STATUSES.includes(o.status)) {
             cancelOrder(d, o, '刊登已被管理員下架');
           }
         }

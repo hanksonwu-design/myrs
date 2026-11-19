@@ -17,13 +17,19 @@
 
 ## 2. 建立資料表和規則
 
-到專案的 **SQL Editor**，依序貼上並執行這三個檔案：
+到專案的 **SQL Editor**，依序貼上並執行這五個檔案：
 
 1. `migrations/20261119000001_schema.sql`：資料表、權限（RLS）、所有點數與交易規則。
 2. `migrations/20261119000002_storage.sql`：照片儲存空間。刊登照片公開；聊天照片只有交易雙方看得到。
 3. `migrations/20261119000003_cron.sql`：每 5 分鐘跑一次逾時取消、自動完成、食品過期。
    - 如果出現 pg_cron 的錯誤，先到 **Database → Extensions** 打開 `pg_cron`，再執行一次。
    - 跳過這一步也能用，網站開著時會自動補跑。
+4. `migrations/20261119000004_review_fixes.sql`：上線前檢查後的修正。
+   - 獎勵一人一份：同一個 Gmail 加 `+別名` 或加點，都算同一個人。
+   - 接受後雙方都沒按「完成」，第 5 天提醒、第 7 天自動取消並退點。天數在後台「參數」調整，0 是不取消。
+   - 交易有新進度時寄 Email 通知（要做第 7 節才會真的寄出）。
+   - 管理員下架刊登、或有人刪除帳號時，爭議中的交易也會取消並退點。
+5. `migrations/20261119000005_notify_cron.sql`：每分鐘檢查有沒有待寄的通知信。先做完第 7 節的 1～3 步再執行。
 
 用 Supabase CLI 的話，也可以在 `web/` 執行 `supabase link` 再執行 `supabase db push`。
 
@@ -73,7 +79,7 @@ where id = (select id from auth.users where email = 'you@example.com');
 
 ## 6. 測試規則
 
-`npm run test:sql` 會在本機用 PGlite 跑一遍 schema，並檢查點數和權限規則，不需要連線到 Supabase。目前有 70 多項檢查，例如：
+`npm run test:sql` 會在本機用 PGlite 跑一遍 schema，並檢查點數和權限規則，不需要連線到 Supabase。目前有 100 多項檢查，例如：
 
 - 凍結與退點。
 - 手續費。
@@ -82,6 +88,8 @@ where id = (select id from auth.users where email = 'you@example.com');
 - 檢舉 3 人自動隱藏。
 - 封鎖。
 - 逾時取消與自動完成。
+- 一人一份獎勵（Email 別名）。
+- 通知信的內容和收件人。
 - 使用者不能直接改資料表。
 - 點數守恆。
 
@@ -93,6 +101,38 @@ where id = (select id from auth.users where email = 'you@example.com');
 2. 執行 `npm run test:e2e`，最後一行出現 `all checks passed` 就是全部通過。
 3. 測完到 **SQL Editor** 貼上並執行 [cleanup_e2e.sql](cleanup_e2e.sql)，刪掉所有測試帳號和它們的資料，最後一行顯示 `0` 就是清乾淨了。真實會員（用 Email 或手機登入的）不受影響。
 4. **記得把 Allow anonymous sign-ins 關回去。** 網站本身不使用匿名登入，開著會讓別人不用驗證就能建立帳號。
+
+## 7. Email 通知
+
+交易有新進度時，系統會寄信通知當事人：有人索取、被接受、對方按了完成、快逾時、取消、完成、有人提出爭議（也會通知所有管理員）。自己按的動作不會寄給自己。
+
+做法是資料庫把信放進 `notifications` 佇列，`send-notifications` 函式每分鐘用 Gmail 寄出。
+
+1. 到 **Edge Functions → Deploy a new function → Via Editor**。
+   - 名稱填 `send-notifications`。
+   - 內容貼上 [functions/send-notifications/index.ts](functions/send-notifications/index.ts)。
+   - 按 **Deploy function**。用 CLI 的話是 `supabase functions deploy send-notifications --no-verify-jwt`。
+2. 部署後到函式的 **Settings**，關掉 **Verify JWT**，按 **Save changes**。
+   - 排程呼叫時不帶金鑰，所以要關掉。
+   - 這個函式不接受任何輸入，別人呼叫也只會讓佇列裡的信早一點寄出。
+3. 到 **Edge Functions → Secrets** 新增 `SMTP_PASS`，填 Gmail 的應用程式密碼（和第 4 節 SMTP 用的同一組）。
+   - 寄件信箱不是 `myrs.share@gmail.com` 的話，再加 `SMTP_USER`。
+   - 網站網址不同的話，加 `SITE_URL`。
+4. 執行第 2 節的 `migrations/20261119000005_notify_cron.sql`。換了專案的話，先把檔案裡的網址改成自己的專案網址。
+5. 測試：在 SQL Editor 執行下面這行，1～2 分鐘內管理員信箱會收到信。
+
+```sql
+select private.notify((select id from public.profiles where role = 'admin' limit 1), '測試通知', '這是一封 Myrs 通知測試信。', '/');
+```
+
+沒收到的話，看寄送紀錄：
+
+```sql
+select created_at, subject, attempts, sent_at, last_error from public.notifications order by created_at desc limit 10;
+```
+
+- `last_error` 會寫錯誤原因，例如密碼錯誤。同一封信最多試 5 次。
+- Gmail 每天約可寄 500 封，和登入驗證信共用額度。
 
 ## 安全設計重點
 
@@ -107,4 +147,5 @@ where id = (select id from auth.users where email = 'you@example.com');
 
 - 獎勵點數的到期日只記錄、會顯示，還不會真的扣除。要扣除得做先進先出的點數消耗，留到營收版。
 - 網頁一次載入使用者看得到的所有資料，大約幾千筆以內都沒問題。超過的話，要改成分頁和伺服器端統計（例如後台儀表板）。
+- 通知只寄 Email，沒有手機推播，使用者也還不能關掉通知信。
 - 管理員在後台看不到使用者的手機號碼。需要客服查詢時，到 Supabase 的 **Authentication → Users** 查。

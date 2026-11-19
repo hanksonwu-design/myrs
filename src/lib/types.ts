@@ -144,6 +144,8 @@ export interface Settings {
   reviewWindowDays: number;
   reportHideThreshold: number;
   rewardExpiryMonths: number;
+  /** Accepted deals nobody confirms are cancelled after this many days (0 = never). */
+  acceptTimeoutDays: number;
 }
 
 export interface AdminLog {

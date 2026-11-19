@@ -7,7 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const schema = fs.readFileSync(path.join(here, '../migrations/20261119000001_schema.sql'), 'utf8');
+// Storage (002), pg_cron (003) and pg_net (005) need Supabase extensions, so they are skipped here.
+const migration = (name) => fs.readFileSync(path.join(here, '../migrations', name), 'utf8');
 const db = new PGlite();
 
 await db.exec(`
@@ -21,8 +22,9 @@ await db.exec(`
   grant usage on schema public to anon, authenticated;
   create publication supabase_realtime;
 `);
-await db.exec(schema);
-console.log('migration applied');
+await db.exec(migration('20261119000001_schema.sql'));
+await db.exec(migration('20261119000004_review_fixes.sql'));
+console.log('migrations applied');
 
 let failures = 0;
 const check = (cond, label) => {
@@ -225,6 +227,99 @@ check((await su(`select count(*)::int n from auth.users where id = '${C}'`))[0].
 await su(`insert into auth.users values ('00000000-0000-0000-0000-0000000000c2', null, 'C@example.com')`);
 const again = await one('00000000-0000-0000-0000-0000000000c2', `select complete_signup('小西2') r`);
 check(again.r.bonus === 0, 'same email does not get the signup bonus again');
+
+console.log('one reward per person (e-mail aliases)');
+const E1 = '00000000-0000-0000-0000-0000000000e1';
+const E2 = '00000000-0000-0000-0000-0000000000e2';
+const E3 = '00000000-0000-0000-0000-0000000000e3';
+await su(`insert into auth.users values ('${E1}', null, 'Mei.Lin@gmail.com'), ('${E2}', null, 'meilin+2@gmail.com'), ('${E3}', null, 'mei.lin+x@googlemail.com')`);
+check((await one(E1, `select complete_signup('美玲') r`)).r.bonus === 50, 'first address gets the signup bonus');
+check((await one(E2, `select complete_signup('美玲2') r`)).r.bonus === 0, 'gmail +alias gets no signup bonus');
+check((await one(E3, `select complete_signup('美玲3') r`)).r.bonus === 0, 'googlemail dotted alias gets no signup bonus');
+const cloth = (t) => food({ title: t, category: 'clothing', mode: 'free', pricePoints: 0 });
+check((await one(E1, `select create_listing($1::jsonb) r`, [cloth('洋裝')])).r.reward === 20, 'first listing reward once');
+check((await one(E2, `select create_listing($1::jsonb) r`, [cloth('短裙')])).r.reward === 0, 'alias gets no first listing reward');
+const LE = (await one(E1, `select create_listing($1::jsonb) r`, [cloth('圍巾')])).r.id;
+const OE = (await one(E2, `select request_listing($1, '', '') r`, [LE])).r;
+await as(E1, `select accept_order($1)`, [OE]);
+await as(E1, `select mark_done($1)`, [OE]);
+await as(E2, `select mark_done($1)`, [OE]);
+check((await su(`select count(*)::int n from ledger where user_id in ('${E1}', '${E2}') and note = '首次完成交易獎勵'`))[0].n === 1, 'one first deal reward for both aliases together');
+check((await err(E1, `select * from reward_grants`))?.includes('permission denied'), 'cannot read reward_grants');
+
+console.log('e-mail notifications');
+const mail = async (u) => su(`select subject, body, link from notifications where user_id = $1 order by created_at, subject`, [u]);
+await su(`delete from notifications`);
+const LN = (await one(A, `select create_listing($1::jsonb) r`, [food({ title: '鳳梨酥', pricePoints: 10 })])).r.id;
+const ON = (await one(B, `select request_listing($1, '可以晚上拿嗎', '') r`, [LN])).r;
+let m = await mail(A);
+check(m.length === 1 && m[0].subject.includes('想索取') && m[0].body.includes('可以晚上拿嗎') && m[0].link === '/orders?tab=provide', 'provider mailed on request');
+check((await mail(B)).length === 0, 'requester not mailed for own request');
+await as(A, `select accept_order($1)`, [ON]);
+m = await mail(B);
+check(m.length === 1 && m[0].subject.includes('接受') && m[0].link.endsWith(ON), 'requester mailed on accept');
+await as(A, `select mark_done($1)`, [ON]);
+m = await mail(B);
+check(m.length === 2 && m[1].body.includes('提出爭議') && m[1].body.includes('10 點'), 'requester warned when provider confirms first');
+await as(B, `select mark_done($1)`, [ON]);
+check((await mail(A)).some((x) => x.subject === '「鳳梨酥」交易完成'), 'first confirmer mailed when the deal completes');
+check(!(await mail(B)).some((x) => x.subject === '「鳳梨酥」交易完成'), 'last confirmer not mailed');
+check((await err(B, `select * from notifications`))?.includes('permission denied'), 'clients cannot read notifications');
+check((await err(B, `select private.notify($1, 'x', 'y')`, [B]))?.includes('permission denied'), 'clients cannot queue mail');
+const claimed = await su(`select * from private.claim_notifications(100)`);
+check(claimed.length > 0 && claimed.every((x) => 'email' in x), 'sender claims queued mail with addresses');
+check((await su(`select * from private.claim_notifications(100)`)).length === 0, 'claimed mail is not handed out twice');
+for (const x of claimed) await su(`select private.finish_notification($1, true, '')`, [x.id]);
+check((await su(`select count(*)::int n from notifications where sent_at is null`))[0].n === 0, 'finished mail marked sent');
+
+console.log('accepted deals nobody confirms');
+const LS = (await one(A, `select create_listing($1::jsonb) r`, [food({ title: '鳳梨乾', pricePoints: 12 })])).r.id;
+const OS = (await one(B, `select request_listing($1, '', '') r`, [LS])).r;
+await as(A, `select accept_order($1)`, [OS]);
+const bs = await bal(B);
+await su(`delete from notifications`);
+await su(`update orders set accepted_at = now() - interval '5 days 1 hour' where id = $1`, [OS]);
+await su(`select private.run_maintenance()`);
+check((await su(`select reminded_at from orders where id = $1`, [OS]))[0].reminded_at !== null, 'reminder after 5 days');
+check((await mail(A)).length === 1 && (await mail(B)).length === 1, 'both sides mailed a reminder');
+check((await su(`select status from orders where id = $1`, [OS]))[0].status === 'accepted', 'still open after reminder');
+await su(`update orders set accepted_at = now() - interval '7 days 1 hour' where id = $1`, [OS]);
+await su(`select private.run_maintenance()`);
+check((await su(`select status from orders where id = $1`, [OS]))[0].status === 'cancelled', 'cancelled after 7 days');
+check((await bal(B)) === bs + 12, 'frozen points refunded');
+check((await mail(B)).some((x) => x.body.includes('12 點已退回')), 'requester mailed about the refund');
+await as(ADM, `select admin_update_settings('{"acceptTimeoutDays": 0}')`);
+const LS2 = (await one(A, `select create_listing($1::jsonb) r`, [food({ title: '蛋捲', pricePoints: 3 })])).r.id;
+const OS2 = (await one(B, `select request_listing($1, '', '') r`, [LS2])).r;
+await as(A, `select accept_order($1)`, [OS2]);
+await su(`update orders set accepted_at = now() - interval '30 days' where id = $1`, [OS2]);
+await su(`select private.run_maintenance()`);
+check((await su(`select status from orders where id = $1`, [OS2]))[0].status === 'accepted', 'acceptTimeoutDays 0 turns it off');
+await as(ADM, `select admin_update_settings('{"acceptTimeoutDays": 7}')`);
+
+console.log('disputes are refunded, not left frozen');
+const LD = (await one(A, `select create_listing($1::jsonb) r`, [food({ title: '咖啡豆', pricePoints: 8 })])).r.id;
+const OD = (await one(B, `select request_listing($1, '', '') r`, [LD])).r;
+await as(A, `select accept_order($1)`, [OD]);
+await su(`delete from notifications`);
+await as(B, `select open_dispute($1, '沒有出現')`, [OD]);
+check((await mail(ADM)).some((x) => x.subject.includes('爭議')), 'admins mailed about a dispute');
+check((await mail(A)).length === 1 && (await mail(B)).length === 0, 'other side mailed, disputer not');
+const bd = await bal(B);
+await as(ADM, `select admin_set_listing_status($1, 'removed')`, [LD]);
+check((await su(`select status from orders where id = $1`, [OD]))[0].status === 'cancelled', 'removing the listing cancels the dispute');
+check((await bal(B)) === bd + 8, 'and refunds the requester');
+const P = '00000000-0000-0000-0000-0000000000f1';
+await su(`insert into auth.users values ('${P}', '886955555555', null)`);
+await one(P, `select complete_signup('阿派')`);
+const LP = (await one(P, `select create_listing($1::jsonb) r`, [food({ title: '茶葉', pricePoints: 6 })])).r.id;
+const OP = (await one(B, `select request_listing($1, '', '') r`, [LP])).r;
+await as(P, `select accept_order($1)`, [OP]);
+await as(B, `select open_dispute($1, '品質不符')`, [OP]);
+const bp = await bal(B);
+await as(P, `select delete_account()`);
+check((await su(`select status from orders where id = $1`, [OP]))[0].status === 'cancelled', 'deleting the account cancels the dispute');
+check((await bal(B)) === bp + 6, 'and refunds the requester');
 
 const sum = (await su(`select sum(amount)::int s from ledger where type in ('signup_bonus','reward','adjust')`))[0].s;
 const fees = (await su(`select -sum(amount)::int s from ledger where type = 'fee'`))[0].s;

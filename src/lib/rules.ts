@@ -15,6 +15,7 @@ export const DEFAULT_SETTINGS: Settings = {
   reviewWindowDays: 7,
   reportHideThreshold: 3,
   rewardExpiryMonths: 12,
+  acceptTimeoutDays: 7,
 };
 
 export const CATEGORIES: Record<Category, { label: string; subs: string[] }> = {
