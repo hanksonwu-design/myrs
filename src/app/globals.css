@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand: #00a078;
+  --color-brand-dark: #008765;
+  --color-brand-soft: #e6f6f1;
+  --color-m-sky: #00a8e8;
+  --color-m-amber: #f0a000;
+  --color-m-rose: #e03050;
+  --color-m-green: #00a038;
+  --font-sans: "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", system-ui, -apple-system, "Segoe UI",
+    sans-serif;
+}
+
+html,
+body {
+  background: #f6f8f7;
+  color: #1e293b;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Use as: className="btn btn-primary" */
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply bg-brand text-white hover:bg-brand-dark;
+  }
+  .btn-outline {
+    @apply border border-slate-300 bg-white text-slate-700 hover:bg-slate-50;
+  }
+  .btn-danger {
+    @apply border border-rose-300 bg-white text-m-rose hover:bg-rose-50;
+  }
+  .btn-ghost {
+    @apply text-slate-600 hover:bg-slate-100;
+  }
+  .input {
+    @apply w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20;
+  }
+  .label {
+    @apply mb-1.5 block text-sm font-semibold text-slate-700;
+  }
+  .card {
+    @apply rounded-2xl border border-slate-200 bg-white;
+  }
+  .chip {
+    @apply inline-flex shrink-0 items-center gap-1 rounded-full border px-3 py-1.5 text-sm font-medium whitespace-nowrap transition;
+  }
+  .chip-on {
+    @apply border-brand bg-brand text-white;
+  }
+  .chip-off {
+    @apply border-slate-300 bg-white text-slate-600 hover:border-brand hover:text-brand;
+  }
+}
+
+.leaflet-container {
+  font: inherit;
+  border-radius: inherit;
+}
+.myrs-pin {
+  background: transparent;
+  border: 0;
+}

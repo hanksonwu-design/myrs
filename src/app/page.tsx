@@ -1,0 +1,215 @@
+'use client';
+
+import { useMemo, useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { List, LocateFixed, Map as MapIcon, Search, Sparkles } from 'lucide-react';
+import { currentUser, useDB } from '@/lib/store';
+import { searchListings } from '@/lib/search';
+import { RADIUS_OPTIONS } from '@/lib/rules';
+import type { Category, Mode } from '@/lib/types';
+import { ListingCard } from '@/components/ListingVisuals';
+import { MapView } from '@/components/map/MapView';
+import { Empty } from '@/components/ui';
+import { useMyPosition } from '@/components/hooks';
+import { useToast } from '@/components/Providers';
+import { listingPath } from '@/lib/links';
+
+const ZOOM_FOR_RADIUS: Record<number, number> = { 1: 15, 3: 13, 5: 12, 10: 11 };
+
+export default function NearbyPage() {
+  const d = useDB()!;
+  const router = useRouter();
+  const toast = useToast();
+  const user = currentUser(d);
+  const pos = useMyPosition();
+  const [category, setCategory] = useState<Category | 'all'>('all');
+  const [mode, setMode] = useState<Mode | 'all'>('all');
+  const [radius, setRadius] = useState(1);
+  const [q, setQ] = useState('');
+  const [sort, setSort] = useState<'near' | 'new'>('near');
+  const [view, setView] = useState<'list' | 'map'>('list');
+  const [hover, setHover] = useState<string | null>(null);
+
+  const hits = useMemo(
+    () =>
+      searchListings(d, {
+        center: pos.point,
+        radiusKm: radius,
+        category,
+        mode,
+        q,
+        sort,
+        viewerId: user?.id ?? null,
+      }),
+    [d, pos.point, radius, category, mode, q, sort, user?.id],
+  );
+
+  const nextRadius = RADIUS_OPTIONS.find((r) => r > radius);
+
+  const map = (
+    <MapView
+      center={pos.point}
+      zoom={ZOOM_FOR_RADIUS[radius]}
+      radiusKm={radius}
+      userPosition={pos.point}
+      markers={hits.map((h) => ({
+        id: h.listing.id,
+        position: h.publicLocation,
+        color: h.listing.category === 'food' ? '#F0A000' : '#00A8E8',
+        label: h.listing.title,
+        active: hover === h.listing.id,
+      }))}
+      onMarkerClick={(id) => router.push(listingPath(id))}
+      className="h-[calc(100vh-15rem)] min-h-80 md:h-[calc(100vh-9rem)]"
+    />
+  );
+
+  return (
+    <div>
+      {!user && (
+        <section className="mb-4 overflow-hidden rounded-3xl bg-gradient-to-br from-brand to-m-green p-5 text-white sm:p-7">
+          <p className="text-sm font-semibold opacity-90">分享吾需⇄換取所需</p>
+          <h1 className="mt-1 text-2xl font-bold sm:text-3xl">打開就看到 1 公里內，鄰居分享的食物與衣物</h1>
+          <p className="mt-2 max-w-xl text-sm opacity-90">
+            多餘的東西刊登出來，需要的人用點數、以物易物或免費索取。註冊就送 {d.settings.signupBonus} 點。
+          </p>
+          <div className="mt-4 flex gap-2">
+            <Link href="/login" className="btn bg-white text-brand-dark hover:bg-brand-soft">
+              <Sparkles className="size-4" />
+              免費註冊
+            </Link>
+            <Link href="/about" className="btn border border-white/50 text-white hover:bg-white/10">
+              怎麼運作
+            </Link>
+          </div>
+        </section>
+      )}
+
+      {/* Filters */}
+      <div className="sticky top-14 z-[1000] -mx-4 mb-3 space-y-2 bg-[#f6f8f7]/95 px-4 pb-2 pt-1 backdrop-blur">
+        <div className="flex gap-2">
+          <label className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+            <input
+              className="input pl-9"
+              placeholder="搜尋：麵包、童裝、外套…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              aria-label="搜尋"
+            />
+          </label>
+          <button
+            className="btn btn-outline px-3 md:hidden"
+            onClick={() => setView(view === 'list' ? 'map' : 'list')}
+            aria-label={view === 'list' ? '切換到地圖' : '切換到列表'}
+          >
+            {view === 'list' ? <MapIcon className="size-4" /> : <List className="size-4" />}
+            {view === 'list' ? '地圖' : '列表'}
+          </button>
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
+          {(
+            [
+              ['all', '全部'],
+              ['food', '食'],
+              ['clothing', '衣'],
+            ] as const
+          ).map(([v, label]) => (
+            <button key={v} className={`chip ${category === v ? 'chip-on' : 'chip-off'}`} onClick={() => setCategory(v)}>
+              {label}
+            </button>
+          ))}
+          <span className="mx-1 w-px shrink-0 bg-slate-300" />
+          {(
+            [
+              ['all', '所有方式'],
+              ['free', '免費'],
+              ['points', '點數'],
+              ['swap', '以物易物'],
+            ] as const
+          ).map(([v, label]) => (
+            <button key={v} className={`chip ${mode === v ? 'chip-on' : 'chip-off'}`} onClick={() => setMode(v)}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+          <span className="flex items-center gap-1">
+            <span className="text-slate-500">範圍</span>
+            <select
+              className="rounded-lg border border-slate-300 bg-white px-2 py-1 font-semibold"
+              value={radius}
+              onChange={(e) => setRadius(Number(e.target.value))}
+              aria-label="搜尋範圍"
+            >
+              {RADIUS_OPTIONS.map((r) => (
+                <option key={r} value={r}>
+                  {r} 公里內
+                </option>
+              ))}
+            </select>
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="text-slate-500">排序</span>
+            <select
+              className="rounded-lg border border-slate-300 bg-white px-2 py-1 font-semibold"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as 'near' | 'new')}
+              aria-label="排序"
+            >
+              <option value="near">距離最近</option>
+              <option value="new">最新刊登</option>
+            </select>
+          </span>
+          <button
+            className="flex items-center gap-1 text-slate-600 hover:text-brand"
+            onClick={() => (pos.source === 'gps' ? pos.reset() : pos.locate((m) => toast(m, 'info')))}
+            disabled={pos.locating}
+          >
+            <LocateFixed className="size-4" />
+            {pos.locating ? '定位中…' : pos.source === 'gps' ? '我的位置（改回試點中心）' : '大安森林公園（使用我的位置）'}
+          </button>
+        </div>
+      </div>
+
+      <p className="mb-3 text-sm text-slate-600">
+        {radius} 公里內有 <b className="text-brand-dark">{hits.length}</b> 則分享
+        <span className="text-slate-400">　位置為約略範圍，對方接受後才顯示精確地點</span>
+      </p>
+
+      <div className="md:grid md:grid-cols-[1fr_minmax(320px,42%)] md:gap-4">
+        <div className={view === 'map' ? 'hidden md:block' : ''}>
+          {hits.length === 0 ? (
+            <Empty
+              icon={<Search className="size-6" />}
+              title={`${radius} 公里內沒有符合的分享`}
+              text={nextRadius ? `擴大範圍看看，或換個關鍵字。` : '換個關鍵字或篩選條件看看。'}
+              action={
+                nextRadius ? (
+                  <button className="btn btn-primary" onClick={() => setRadius(nextRadius)}>
+                    擴大到 {nextRadius} 公里
+                  </button>
+                ) : undefined
+              }
+            />
+          ) : (
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+              {hits.map((h) => (
+                <ListingCard
+                  key={h.listing.id}
+                  d={d}
+                  listing={h.listing}
+                  distance={h.distance}
+                  highlighted={hover === h.listing.id}
+                  onHover={setHover}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+        <div className={`${view === 'list' ? 'hidden md:block' : ''} md:sticky md:top-[13.5rem] md:self-start`}>{map}</div>
+      </div>
+    </div>
+  );
+}
