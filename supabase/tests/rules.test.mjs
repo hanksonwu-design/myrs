@@ -26,6 +26,7 @@ await db.exec(migration('20261119000001_schema.sql'));
 await db.exec(migration('20261119000004_review_fixes.sql'));
 await db.exec(migration('20261119000006_improvements.sql'));
 await db.exec(migration('20261120000007_admin_levels.sql'));
+await db.exec(migration('20261120000008_admin_tools.sql'));
 console.log('migrations applied');
 
 let failures = 0;
@@ -626,6 +627,69 @@ check((await lvl(M1)).role === 'member' && (await lvl(M1)).admin_level === null,
 check((await as(M1, `select * from reports where reporter_id <> $1`, [M1])).length === 0, 'who loses the staff reads');
 check((await err(ADM, `select admin_set_role($1, 'admin')`, [D]))?.includes('停權'), 'suspended members cannot join the staff');
 check((await su(`select count(*)::int n from admin_log where action like '%改為%'`))[0].n === 5, 'every role change is logged');
+
+console.log('admin tools (migration 8)');
+const lastLog = async (prefix) =>
+  (await su(`select action from admin_log where action like $1 order by created_at desc limit 1`, [`${prefix}%`]))[0]?.action ?? '';
+const setWords = (u, words) =>
+  as(u, `select admin_set_banned_words(array(select jsonb_array_elements_text($1::jsonb)))`, [JSON.stringify(words)]);
+const wordsErr = (u, words) =>
+  err(u, `select admin_set_banned_words(array(select jsonb_array_elements_text($1::jsonb)))`, [JSON.stringify(words)]);
+const bw = async () => (await su(`select banned_words from settings`))[0].banned_words;
+const w0 = await bw();
+check(w0.includes('酒') && w0.includes('自製'), 'the old list carries over');
+check((await wordsErr(M2, ['酒']))?.includes('擁有者'), 'only owners edit banned words');
+await setWords(ADM, [...w0.filter((w) => w !== '自製'), ' 彩券 ', '彩券', '']);
+const w1 = await bw();
+check(w1.includes('彩券') && !w1.includes('自製') && w1.filter((w) => w === '彩券').length === 1 && !w1.includes(''), 'owners edit the list (trimmed, no repeats or blanks)');
+check((await lastLog('更新禁售詞')).includes('新增「彩券」') && (await lastLog('更新禁售詞')).includes('移除「自製」'), 'the log lists added and removed words');
+check((await lstat(await mk(G2, { title: '刮刮樂彩券' }))) === 'pending_review', 'a new word sends listings to review');
+check((await lstat(await mk(G2, { title: '自製餅乾' }))) === 'active', 'a removed word no longer does');
+check((await wordsErr(ADM, w1))?.includes('沒有變更'), 'an unchanged list is refused');
+check((await wordsErr(ADM, [...w1, '一二三四五六七八九十一']))?.includes('太長'), 'words are at most 10 characters');
+await setWords(ADM, w0);
+
+check((await err(M2, `select admin_set_announcement('x')`))?.includes('擁有者'), 'only owners post announcements');
+await as(ADM, `select admin_set_announcement('  週末系統維護  ', now() + interval '2 days')`);
+const an = await one(G2, `select announcement, announcement_until, announcement_at from settings`);
+check(an.announcement === '週末系統維護' && !!an.announcement_until && !!an.announcement_at, 'everyone reads the announcement');
+check((await lastLog('發布全站公告')).includes('週末系統維護'), 'and it is logged');
+check((await err(ADM, `select admin_set_announcement('x', now() - interval '1 hour')`))?.includes('之後'), 'the end time must be in the future');
+check((await err(ADM, `select admin_set_announcement($1)`, ['長'.repeat(201)]))?.includes('200'), 'at most 200 characters');
+await as(ADM, `select admin_set_announcement('')`);
+check((await su(`select announcement, announcement_at from settings`))[0].announcement === '', 'an empty text takes it down');
+check((await err(ADM, `select admin_set_announcement('')`))?.includes('沒有公告'), 'nothing to take down');
+
+await as(ADM, `select admin_set_role($1, 'moderator')`, [M1]);
+await su(`delete from notifications`);
+await su(`select private.notify($1, '還在排隊', '信件內文', '/')`, [G2]);
+await su(`insert into notifications (user_id, subject, body, attempts, last_error) values ($1, '寄不出去', '信件內文', 5, 'Error: 550 someone@example.com mailbox unavailable')`, [G3]);
+await su(`insert into notifications (user_id, subject, body, sent_at, last_error) values ($1, '沒有信箱', '信件內文', now(), 'no e-mail address')`, [G3]);
+await su(`insert into notifications (user_id, subject, body, sent_at) values ($1, '寄出了', '信件內文', now())`, [G3]);
+const ms = (await one(M2, `select admin_mail_status() r`)).r;
+check(ms.pending === 1 && ms.failed === 1 && ms.sent24h === 1 && ms.noAddress === 1, 'admins see mail counts');
+check(ms.items.length === 3 && !ms.items.some((x) => x.subject === '寄出了'), 'problem mail only by default');
+const g3name = (await su(`select name from profiles where id = $1`, [G3]))[0].name;
+const fm = ms.items.find((x) => x.state === 'failed');
+check(!!fm && fm.name === g3name && !fm.error.includes('@') && fm.error.includes('（信箱）'), 'with names, and addresses masked');
+check(!JSON.stringify(ms).includes('信件內文'), 'without message bodies');
+check((await one(M2, `select admin_mail_status('all') r`)).r.items.length === 4, 'or all mail');
+check((await err(M1, `select admin_mail_status()`))?.includes('管理員'), 'moderators cannot see mail status');
+check((await err(M1, `select admin_retry_mail()`))?.includes('管理員'), 'or resend mail');
+check((await one(M2, `select admin_retry_mail() r`)).r === 1, 'failed mail is queued again');
+check((await su(`select attempts, last_error from notifications where subject = '寄不出去'`))[0].attempts === 0, 'with its attempts reset');
+check((await err(M2, `select admin_retry_mail()`))?.includes('沒有需要重寄'), 'nothing left to resend');
+check((await lastLog('重新寄出')).includes('1 封'), 'resending is logged');
+
+const s0 = (await su(`select fee_rate, min_fee from settings`))[0];
+await as(ADM, `select admin_update_settings($1::jsonb)`, [JSON.stringify({ feeRate: 0.08, minFee: s0.min_fee + 1, signupBonus: 50 })]);
+const sl = await lastLog('更新平台參數');
+check(
+  sl.includes(`手續費比例 ${+(s0.fee_rate * 100).toFixed(4)}% → 8%`) && sl.includes(`最低手續費 ${s0.min_fee} 點 → ${s0.min_fee + 1} 點`) && !sl.includes('新手點數'),
+  'the settings log says what changed, and only that',
+);
+check((await err(ADM, `select admin_update_settings('{"feeRate": 0.08}')`))?.includes('沒有變更'), 'an unchanged save is refused');
+await as(ADM, `select admin_update_settings($1::jsonb)`, [JSON.stringify({ feeRate: s0.fee_rate, minFee: s0.min_fee })]);
 
 const sum = (await su(`select sum(amount)::int s from ledger where type in ('signup_bonus','reward','adjust')`))[0].s;
 const fees = (await su(`select -sum(amount)::int s from ledger where type = 'fee'`))[0].s;

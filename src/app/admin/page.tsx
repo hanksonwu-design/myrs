@@ -1,8 +1,23 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, CheckCircle2, Flag, Gauge, ListChecks, ScrollText, Search, Settings2, Users } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Flag,
+  Gauge,
+  ListChecks,
+  Mail,
+  Megaphone,
+  RefreshCw,
+  ScrollText,
+  Search,
+  Settings2,
+  ShieldBan,
+  Users,
+  X,
+} from 'lucide-react';
 import {
   actions,
   balanceOf,
@@ -17,10 +32,10 @@ import {
 import { activeWithin } from '@/lib/search';
 import { PILOT_CENTER, PILOT_NAME } from '@/lib/geo';
 import { DAY, formatDate, formatDateTime, timeAgo } from '@/lib/format';
-import { LISTING_STATUS_LABEL, MODE_LABEL, ORDER_STATUS_LABEL } from '@/lib/rules';
+import { announcementOn, LISTING_STATUS_LABEL, MODE_LABEL, ORDER_STATUS_LABEL } from '@/lib/rules';
 import { IS_REMOTE } from '@/lib/backend';
 import { activeSuspension, formatUntil, hasLevel, isStaff, LEVEL_DUTIES, LEVEL_LABEL, levelOf } from '@/lib/staff';
-import type { AdminLevel, DB, LedgerEntry, Settings, User } from '@/lib/types';
+import type { AdminLevel, DB, LedgerEntry, MailItem, MailStatus, Settings, User } from '@/lib/types';
 import { ListingThumb } from '@/components/ListingVisuals';
 import { RemoveListingButton } from '@/components/RemoveListing';
 import { Avatar, Loading, Modal, ModeBadge } from '@/components/ui';
@@ -29,7 +44,7 @@ import { PointsHealth } from '@/components/PointsHealth';
 import { useToast } from '@/components/Providers';
 import { listingPath, userPath } from '@/lib/links';
 
-type Tab = 'dash' | 'listings' | 'reports' | 'disputes' | 'users' | 'settings' | 'log';
+type Tab = 'dash' | 'listings' | 'reports' | 'disputes' | 'users' | 'mail' | 'settings' | 'log';
 
 /** The lowest level that sees each tab; the server checks the same levels. */
 const TAB_LEVEL: Record<Tab, AdminLevel> = {
@@ -38,6 +53,7 @@ const TAB_LEVEL: Record<Tab, AdminLevel> = {
   reports: 'moderator',
   disputes: 'admin',
   users: 'admin',
+  mail: 'admin',
   settings: 'owner',
   log: 'admin',
 };
@@ -73,7 +89,8 @@ export default function AdminPage() {
     { id: 'reports', label: '檢舉', icon: <Flag className="size-4" />, badge: openReportTargets },
     { id: 'disputes', label: '爭議', icon: <AlertTriangle className="size-4" />, badge: disputes },
     { id: 'users', label: '使用者', icon: <Users className="size-4" /> },
-    { id: 'settings', label: '參數', icon: <Settings2 className="size-4" /> },
+    { id: 'mail', label: '通知信', icon: <Mail className="size-4" /> },
+    { id: 'settings', label: '設定', icon: <Settings2 className="size-4" /> },
     { id: 'log', label: '紀錄', icon: <ScrollText className="size-4" /> },
   ];
   const tabs = allTabs.filter((t) => hasLevel(user, TAB_LEVEL[t.id]));
@@ -109,7 +126,8 @@ export default function AdminPage() {
       {current === 'reports' && <Reports d={d} me={user} />}
       {current === 'disputes' && <Disputes d={d} />}
       {current === 'users' && <UserAdmin d={d} me={user} />}
-      {current === 'settings' && <SettingsForm d={d} />}
+      {current === 'mail' && <MailView d={d} />}
+      {current === 'settings' && <SettingsTab d={d} />}
       {current === 'log' && <Log d={d} />}
     </div>
   );
@@ -937,7 +955,13 @@ function SettingsForm({ d }: { d: DB }) {
         toast(r.ok ? '參數已更新' : r.error, r.ok ? 'success' : 'error');
       }}
     >
-      <p className="mb-4 text-sm text-slate-500">修改後立即生效；已建立的交易維持建立時的點數與手續費。</p>
+      <h2 className="flex items-center gap-1.5 font-bold">
+        <Settings2 className="size-4 text-brand" />
+        平台參數
+      </h2>
+      <p className="mb-4 mt-1 text-sm text-slate-500">
+        修改後立即生效；已建立的交易維持建立時的點數與手續費。每次修改都會在「紀錄」寫下改了哪些項目。
+      </p>
       <div className="grid gap-3 sm:grid-cols-2">
         {SETTING_FIELDS.map((f) => (
           <label key={f.key} className="block">
@@ -956,6 +980,307 @@ function SettingsForm({ d }: { d: DB }) {
       </div>
       <button className="btn btn-primary mt-5">儲存參數</button>
     </form>
+  );
+}
+
+// ---------------------------------------------------------------- settings tab
+
+function SettingsTab({ d }: { d: DB }) {
+  return (
+    <div className="space-y-4">
+      <AnnouncementForm d={d} />
+      <BannedWordsForm d={d} />
+      <SettingsForm d={d} />
+    </div>
+  );
+}
+
+/** datetime-local value for a time, in the browser's time zone. */
+const localInput = (t: number) => {
+  const x = new Date(t);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}T${p(x.getHours())}:${p(x.getMinutes())}`;
+};
+
+function AnnouncementForm({ d }: { d: DB }) {
+  const toast = useToast();
+  const s = d.site;
+  const now = nowOf(d);
+  const on = announcementOn(s, now);
+  const [text, setText] = useState(s.announcement);
+  const [noEnd, setNoEnd] = useState(!!s.announcement && s.announcementUntil === null);
+  const [until, setUntil] = useState(localInput(s.announcementUntil && s.announcementUntil > now ? s.announcementUntil : now + 7 * DAY));
+  const [busy, setBusy] = useState(false);
+
+  const save = async (clear: boolean) => {
+    const end = noEnd ? null : new Date(until).getTime();
+    if (!clear && !text.trim()) return toast('請先寫公告內容', 'error');
+    if (!clear && end !== null && !Number.isFinite(end)) return toast('請選擇結束時間', 'error');
+    setBusy(true);
+    const r = await actions.adminSetAnnouncement(clear ? '' : text, clear ? null : end);
+    setBusy(false);
+    if (!r.ok) return toast(r.error, 'error');
+    if (clear) setText('');
+    toast(clear ? '已取消公告' : '公告已發布，首頁會顯示');
+  };
+
+  return (
+    <section className="card p-5">
+      <h2 className="flex items-center gap-1.5 font-bold">
+        <Megaphone className="size-4 text-brand" />
+        全站公告
+      </h2>
+      <p className="mt-1 text-sm text-slate-500">
+        {on
+          ? `首頁正在顯示公告${s.announcementUntil ? `，到 ${formatUntil(s.announcementUntil)} 自動結束` : '，沒有結束時間'}。`
+          : s.announcement
+            ? '上一則公告已經過了結束時間，首頁不再顯示。'
+            : '目前沒有公告。發布後會顯示在首頁最上方，看過的人可以關掉。'}
+      </p>
+      <textarea
+        className="input mt-3 min-h-20"
+        maxLength={200}
+        placeholder="例如：11/23（六）凌晨 2～4 點系統維護，期間暫停使用。"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        aria-label="公告內容"
+      />
+      <p className="mt-1 text-right text-xs text-slate-400">{text.length}/200</p>
+      <div className="mt-1 flex flex-wrap items-center gap-3 text-sm">
+        <label className="flex items-center gap-2">
+          結束時間
+          <input
+            type="datetime-local"
+            className="input w-auto py-1.5"
+            value={until}
+            disabled={noEnd}
+            onChange={(e) => setUntil(e.target.value)}
+            aria-label="公告結束時間"
+          />
+        </label>
+        <label className="flex items-center gap-1.5">
+          <input type="checkbox" checked={noEnd} onChange={(e) => setNoEnd(e.target.checked)} />
+          不設結束時間
+        </label>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button className="btn btn-primary" disabled={busy} onClick={() => save(false)}>
+          {s.announcement ? '更新公告' : '發布公告'}
+        </button>
+        {s.announcement && (
+          <button className="btn btn-outline" disabled={busy} onClick={() => confirm('確定取消這則公告？') && save(true)}>
+            取消公告
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function BannedWordsForm({ d }: { d: DB }) {
+  const toast = useToast();
+  const saved = d.site.bannedWords;
+  const [words, setWords] = useState<string[]>(saved);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const dirty = words.length !== saved.length || words.some((w, i) => w !== saved[i]);
+
+  const add = () => {
+    const fresh = input
+      .split(/[,，、\s]+/)
+      .map((w) => w.trim())
+      .filter(Boolean);
+    if (!fresh.length) return;
+    const tooLong = fresh.find((w) => w.length > 10);
+    if (tooLong) return toast(`「${tooLong}」太長，每個詞最多 10 個字`, 'error');
+    setWords((x) => [...x, ...fresh.filter((w, i) => !x.includes(w) && fresh.indexOf(w) === i)]);
+    setInput('');
+  };
+
+  const save = async () => {
+    setBusy(true);
+    const r = await actions.adminSetBannedWords(words);
+    setBusy(false);
+    toast(r.ok ? '禁售詞已更新，之後的新刊登會用新的清單檢查' : r.error, r.ok ? 'success' : 'error');
+  };
+
+  return (
+    <section className="card p-5">
+      <h2 className="flex items-center gap-1.5 font-bold">
+        <ShieldBan className="size-4 text-m-rose" />
+        禁售詞
+        <span className="text-sm font-normal text-slate-400">{words.length} 個</span>
+      </h2>
+      <p className="mt-1 text-sm text-slate-500">
+        新刊登的標題、說明或想交換的東西包含這些字，會先進「刊登審核」，通過後才公開。修改只影響之後的新刊登，已上架的不會重新檢查。
+      </p>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {words.map((w) => (
+          <span key={w} className="inline-flex items-center gap-1 rounded-full bg-slate-100 py-1 pl-3 pr-1.5 text-sm">
+            {w}
+            <button
+              className="rounded-full p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+              aria-label={`移除「${w}」`}
+              onClick={() => setWords((x) => x.filter((y) => y !== w))}
+            >
+              <X className="size-3.5" />
+            </button>
+          </span>
+        ))}
+        {!words.length && <span className="text-sm text-slate-400">清單是空的：所有新刊登都會直接上架。</span>}
+      </div>
+      <div className="mt-3 flex gap-2">
+        <input
+          className="input flex-1"
+          placeholder="新增禁售詞，可以用逗號或空白一次加好幾個"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              add();
+            }
+          }}
+          aria-label="新增禁售詞"
+        />
+        <button className="btn btn-outline" onClick={add}>
+          加入
+        </button>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button className="btn btn-primary" disabled={busy || !dirty} onClick={save}>
+          儲存禁售詞
+        </button>
+        {dirty && (
+          <button className="btn btn-ghost" onClick={() => setWords(saved)}>
+            還原
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- mail
+
+const MAIL_STATE: Record<MailItem['state'], { label: string; tone: string }> = {
+  pending: { label: '等待寄出', tone: 'bg-amber-50 text-amber-700' },
+  failed: { label: '寄送失敗', tone: 'bg-rose-50 text-m-rose' },
+  no_address: { label: '沒有信箱', tone: 'bg-slate-100 text-slate-600' },
+  sent: { label: '已寄出', tone: 'bg-emerald-50 text-brand-dark' },
+};
+
+function MailView({ d }: { d: DB }) {
+  const toast = useToast();
+  const [filter, setFilter] = useState<'problem' | 'all'>('problem');
+  const [data, setData] = useState<MailStatus | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = async (f: 'problem' | 'all') => {
+    setBusy(true);
+    const r = await actions.adminMailStatus(f);
+    setBusy(false);
+    if (!r.ok) return setError(r.error);
+    setError('');
+    setData(r.value);
+  };
+
+  useEffect(() => {
+    if (IS_REMOTE) void load(filter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter]);
+
+  if (!IS_REMOTE) {
+    return (
+      <p className="card p-6 text-center text-sm text-slate-500">
+        示範模式不會寄出通知信，所以這裡沒有寄送紀錄。正式版會顯示每封信的寄送狀況，寄失敗的信可以重寄。
+      </p>
+    );
+  }
+
+  const retry = async (id: string | null) => {
+    setBusy(true);
+    const r = await actions.adminRetryMail(id);
+    setBusy(false);
+    if (!r.ok) return toast(r.error, 'error');
+    toast(`已排入重寄 ${r.value} 封，1～2 分鐘內會寄出`);
+    void load(filter);
+  };
+
+  const now = nowOf(d);
+  const stuck = !!data?.oldestPending && now - data.oldestPending > 15 * 60_000;
+
+  return (
+    <div className="space-y-4">
+      {error && <p className="card p-4 text-sm text-m-rose">{error}</p>}
+      {data && (
+        <>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Stat label="等待寄出" value={data.pending} sub={data.oldestPending ? `最早一封 ${timeAgo(data.oldestPending, now)}` : '沒有排隊中的信'} />
+            <Stat label="寄送失敗" value={<span className={data.failed ? 'text-m-rose' : ''}>{data.failed}</span>} sub="試了 5 次都沒寄出" />
+            <Stat label="24 小時內寄出" value={data.sent24h} />
+            <Stat label="沒有信箱" value={data.noAddress} sub="用手機註冊、沒有 Email 的會員" />
+          </div>
+          {stuck && (
+            <p className="flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              有信已經排隊超過 15 分鐘還沒寄出，寄信程式可能停了。請到 Supabase 檢查 Edge Function「send-notifications」和寄信密碼（說明文件第 7 節）。
+            </p>
+          )}
+        </>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {(['problem', 'all'] as const).map((f) => (
+          <button key={f} className={`chip ${filter === f ? 'chip-on' : 'chip-off'}`} onClick={() => setFilter(f)}>
+            {f === 'problem' ? '有問題的信' : '最近 50 封'}
+          </button>
+        ))}
+        <button className="btn btn-ghost px-2 py-1 text-sm" disabled={busy} onClick={() => load(filter)}>
+          <RefreshCw className={`size-4 ${busy ? 'animate-spin' : ''}`} />
+          重新整理
+        </button>
+        {!!data?.failed && (
+          <button className="btn btn-primary ml-auto py-1.5" disabled={busy} onClick={() => retry(null)}>
+            全部重寄（{data.failed} 封）
+          </button>
+        )}
+      </div>
+      {data && !data.items.length && (
+        <p className="card p-6 text-center text-sm text-slate-500">
+          {filter === 'problem' ? '沒有寄送有問題的信。' : '還沒有任何通知信。'}
+        </p>
+      )}
+      {data && data.items.length > 0 && (
+        <ul className="card divide-y divide-slate-100">
+          {data.items.map((m) => (
+            <li key={m.id} className="flex flex-col gap-1 p-3 text-sm sm:flex-row sm:items-center sm:gap-3">
+              <span className={`w-fit shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${MAIL_STATE[m.state].tone}`}>
+                {MAIL_STATE[m.state].label}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-semibold">{m.subject}</p>
+                <p className="text-xs text-slate-500">
+                  寄給{' '}
+                  <Link href={userPath(m.userId)} className="underline">
+                    {m.name || '已刪除的使用者'}
+                  </Link>
+                  ・{formatDateTime(m.createdAt)}
+                  {m.state !== 'sent' && m.attempts > 0 && `・試了 ${m.attempts} 次`}
+                </p>
+                {m.error && m.state !== 'no_address' && <p className="mt-0.5 break-all text-xs text-m-rose">{m.error}</p>}
+              </div>
+              {m.state === 'failed' && (
+                <button className="btn btn-outline shrink-0 px-2.5 py-1 text-xs" disabled={busy} onClick={() => retry(m.id)}>
+                  重寄
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-xs text-slate-400">為了保護會員隱私，這裡不顯示 Email 地址和信件內容。</p>
+    </div>
   );
 }
 

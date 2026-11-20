@@ -1,4 +1,4 @@
-import type { Category, ListingStatus, Mode, OrderStatus, Settings } from './types';
+import type { Category, ListingStatus, Mode, OrderStatus, Settings, SiteInfo } from './types';
 
 export const DEFAULT_SETTINGS: Settings = {
   feeRate: 0.1,
@@ -75,8 +75,46 @@ export const BANNED_WORDS = [
   '自製',
 ];
 
-export function findBannedWords(text: string): string[] {
-  return BANNED_WORDS.filter((w) => text.includes(w));
+export function findBannedWords(text: string, words: readonly string[] = BANNED_WORDS): string[] {
+  return words.filter((w) => text.includes(w));
+}
+
+export const DEFAULT_SITE: SiteInfo = {
+  bannedWords: BANNED_WORDS,
+  announcement: '',
+  announcementUntil: null,
+  announcementAt: null,
+};
+
+/** Whether the announcement shows now. */
+export const announcementOn = (s: SiteInfo, now: number) =>
+  !!s.announcement && (s.announcementUntil === null || s.announcementUntil > now);
+
+/** Names and units the settings log uses; the server writes the same text (migration 8). */
+const SETTING_LOG: [keyof Settings, string, string][] = [
+  ['feeRate', '手續費比例', '%'],
+  ['minFee', '最低手續費', ' 點'],
+  ['signupBonus', '新手點數', ' 點'],
+  ['firstListingReward', '首次刊登獎勵', ' 點'],
+  ['firstOrderReward', '首次完成交易獎勵', ' 點'],
+  ['monthlyRewardCap', '每月獎勵上限', ' 點'],
+  ['rewardExpiryMonths', '獎勵點數有效期', ' 個月'],
+  ['freeDailyLimit', '免費索取每日上限', ' 件'],
+  ['newAccountDays', '新帳號觀察期', ' 天'],
+  ['newAccountPointsCap', '新帳號點數交易上限', ' 點'],
+  ['requestTimeoutHours', '索取逾時自動取消', ' 小時'],
+  ['autoCompleteHours', '單方確認後自動完成', ' 小時'],
+  ['acceptTimeoutDays', '接受後都沒人確認，自動取消', ' 天'],
+  ['reviewWindowDays', '評價期限', ' 天'],
+  ['reportHideThreshold', '檢舉幾人自動隱藏', ' 人'],
+];
+
+/** e.g. ['手續費比例 10% → 8%'] */
+export function settingsChanges(a: Settings, b: Settings): string[] {
+  const show = (k: keyof Settings, v: number) => `${+(k === 'feeRate' ? v * 100 : v).toFixed(4)}`;
+  return SETTING_LOG.filter(([k]) => a[k] !== b[k]).map(
+    ([k, label, unit]) => `${label} ${show(k, a[k])}${unit} → ${show(k, b[k])}${unit}`,
+  );
 }
 
 /**

@@ -9,7 +9,7 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_KEY, SUPABASE_URL } from './backend';
 import { BASE_PATH } from './links';
-import { DEFAULT_SETTINGS } from './rules';
+import { DEFAULT_SETTINGS, DEFAULT_SITE } from './rules';
 import { activeSuspension, suspensionNote } from './staff';
 import type {
   AdminLevel,
@@ -18,12 +18,14 @@ import type {
   LatLng,
   LedgerEntry,
   Listing,
+  MailStatus,
   Message,
   Order,
   Report,
   Review,
   SavedSearch,
   Settings,
+  SiteInfo,
   User,
 } from './types';
 import type { NewListingInput, Result, SavedSearchInput } from './store';
@@ -79,6 +81,17 @@ function toSettings(r: Row | undefined): Settings {
     if (r[col] !== undefined && r[col] !== null) s[k] = num(r[col]);
   }
   return s;
+}
+
+/** Banned words and the announcement (migration 8); defaults until it is applied. */
+function toSite(r: Row | undefined): SiteInfo {
+  if (!r) return { ...DEFAULT_SITE };
+  return {
+    bannedWords: Array.isArray(r.banned_words) ? (r.banned_words as string[]) : [...DEFAULT_SITE.bannedWords],
+    announcement: str(r.announcement),
+    announcementUntil: ms(r.announcement_until),
+    announcementAt: ms(r.announcement_at),
+  };
 }
 
 function toListing(r: Row, exact: Map<string, LatLng>): Listing {
@@ -305,6 +318,7 @@ async function fetchSnapshot(): Promise<DB> {
     reviews: reviews.map(toReview),
     reports: reports.map(toReport),
     settings: toSettings(settings[0]),
+    site: toSite(settings[0]),
     adminLog: adminLog.map(toAdminLog),
     lastRead,
     favorites: favs.map((r) => ({ userId: str(r.user_id), listingId: str(r.listing_id), createdAt: msReq(r.created_at) })),
@@ -350,6 +364,7 @@ function emptySnapshot(error: string): DB {
     favorites: [],
     savedSearches: [],
     suspensions: [],
+    site: { ...DEFAULT_SITE },
     auth: null,
     loadError: error,
   };
@@ -635,6 +650,37 @@ export const remoteActions = {
   adminAdjustPoints: (userId: string, amount: number, note: string) =>
     rpc<null>('admin_adjust_points', { p_user: userId, p_amount: amount, p_note: note }),
   adminUpdateSettings: (patch: Partial<Settings>) => rpc<null>('admin_update_settings', { p: patch }),
+  adminSetBannedWords: (words: string[]) => rpc<null>('admin_set_banned_words', { p_words: words }),
+  adminSetAnnouncement: (text: string, until: number | null) =>
+    rpc<null>('admin_set_announcement', {
+      p_text: text,
+      p_until: until === null ? null : new Date(until).toISOString(),
+    }),
+  /** Read only, so no refresh afterwards. */
+  async adminMailStatus(filter: 'problem' | 'all' = 'problem'): Promise<Result<MailStatus>> {
+    const { data, error } = await supabase().rpc('admin_mail_status', { p_filter: filter, p_limit: 50 });
+    if (error) return fail(friendly(error));
+    const r = (data ?? {}) as Row;
+    return ok({
+      pending: num(r.pending),
+      failed: num(r.failed),
+      sent24h: num(r.sent24h),
+      noAddress: num(r.noAddress),
+      oldestPending: ms(r.oldestPending),
+      items: ((r.items as Row[] | undefined) ?? []).map((x) => ({
+        id: str(x.id),
+        userId: str(x.userId),
+        name: str(x.name),
+        subject: str(x.subject),
+        createdAt: msReq(x.createdAt),
+        sentAt: ms(x.sentAt),
+        attempts: num(x.attempts),
+        error: str(x.error),
+        state: x.state as MailStatus['items'][number]['state'],
+      })),
+    });
+  },
+  adminRetryMail: (id: string | null = null) => rpc<number>('admin_retry_mail', { p_id: id }),
 
   /** Time-based rules; pg_cron runs them too, this keeps them moving if cron is off. */
   async tick(): Promise<void> {

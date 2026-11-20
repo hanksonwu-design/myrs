@@ -10,6 +10,7 @@ import { searchListings } from '@/lib/search';
 import { RADIUS_OPTIONS } from '@/lib/rules';
 import type { Category, Mode } from '@/lib/types';
 import { ListingCard } from '@/components/ListingVisuals';
+import { Announcement } from '@/components/Announcement';
 import { MapView } from '@/components/map/MapView';
 import { Empty } from '@/components/ui';
 import { useMyPosition } from '@/components/hooks';
@@ -93,6 +94,7 @@ export default function NearbyPage() {
 
   return (
     <div>
+      <Announcement d={d} />
       {!user && (
         <section className="mb-4 overflow-hidden rounded-3xl bg-gradient-to-br from-brand to-m-green p-5 text-white sm:p-7">
           <p className="text-sm font-semibold opacity-90">分享吾需⇄換取所需</p>

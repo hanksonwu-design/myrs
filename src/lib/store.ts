@@ -13,7 +13,7 @@
 import { useSyncExternalStore } from 'react';
 import { IS_REMOTE } from './backend';
 import { remoteActions, remoteSnapshot, startRemote } from './remote';
-import { calcFee, DEFAULT_SETTINGS, findBannedWords, PHONE_RE } from './rules';
+import { calcFee, DEFAULT_SETTINGS, DEFAULT_SITE, findBannedWords, PHONE_RE, settingsChanges } from './rules';
 import { createSeed, DB_VERSION } from './seed';
 import { DAY, HOUR, ymdLocal } from './format';
 import type {
@@ -23,6 +23,7 @@ import type {
   LatLng,
   LedgerEntry,
   Listing,
+  MailStatus,
   Mode,
   Order,
   OrderStatus,
@@ -31,7 +32,7 @@ import type {
   Settings,
   User,
 } from './types';
-import { activeSuspension, hasLevel, LEVEL_LABEL, levelError, levelOf, suspensionNote } from './staff';
+import { activeSuspension, formatUntil, hasLevel, LEVEL_LABEL, levelError, levelOf, suspensionNote } from './staff';
 
 const KEY = 'myrs-demo-v1';
 let db: DB | null = null;
@@ -66,6 +67,7 @@ function load(): DB {
           savedSearches: parsed.savedSearches ?? [],
           suspensions: parsed.suspensions ?? [],
           settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
+          site: { ...DEFAULT_SITE, ...parsed.site },
         };
       }
     }
@@ -664,7 +666,7 @@ const localActions = {
       if ('error' in u) return fail(u.error);
       const err = validateListing(input, ymdLocal(nowOf(d)));
       if (err) return fail(err);
-      const flagged = findBannedWords(`${input.title} ${input.description} ${input.swapWish}`);
+      const flagged = findBannedWords(`${input.title} ${input.description} ${input.swapWish}`, d.site.bannedWords);
       const first = !d.listings.some((l) => l.ownerId === u.id);
       const l: Listing = {
         id: uid('l'),
@@ -1223,10 +1225,68 @@ const localActions = {
         if (k === 'acceptTimeoutDays' && v > 0 && v < 1) return fail(`「${k}」要是 0（關閉）或 1 以上`);
       }
       if (patch.feeRate !== undefined && patch.feeRate > 0.5) return fail('手續費比例不能超過 50%');
-      d.settings = { ...d.settings, ...patch };
-      logAdmin(d, a, '更新平台參數');
+      const next = { ...d.settings, ...patch };
+      const changes = settingsChanges(d.settings, next);
+      if (!changes.length) return fail('參數沒有變更');
+      d.settings = next;
+      logAdmin(d, a, `更新平台參數：${changes.join('、')}`);
       return ok(null);
     });
+  },
+
+  adminSetBannedWords(words: string[]): Result {
+    return mutate((d) => {
+      const a = requireLevel(d, 'owner');
+      if ('error' in a) return fail(a.error);
+      const next: string[] = [];
+      for (const raw of words) {
+        const w = raw.trim();
+        if (!w || next.includes(w)) continue;
+        if (w.length > 10) return fail(`禁售詞「${w}」太長，每個最多 10 個字`);
+        next.push(w);
+      }
+      if (next.length > 100) return fail('禁售詞最多 100 個');
+      const old = d.site.bannedWords;
+      const added = next.filter((w) => !old.includes(w));
+      const removed = old.filter((w) => !next.includes(w));
+      if (!added.length && !removed.length) return fail('禁售詞沒有變更');
+      d.site = { ...d.site, bannedWords: next };
+      const parts = [added.length ? `新增「${added.join('」「')}」` : '', removed.length ? `移除「${removed.join('」「')}」` : ''];
+      logAdmin(d, a, `更新禁售詞：${parts.filter(Boolean).join('；')}`);
+      return ok(null);
+    });
+  },
+
+  /** An empty text takes the announcement down; until null means no end time. */
+  adminSetAnnouncement(text: string, until: number | null): Result {
+    return mutate((d) => {
+      const a = requireLevel(d, 'owner');
+      if ('error' in a) return fail(a.error);
+      const v = text.trim();
+      if (v.length > 200) return fail('公告最多 200 個字');
+      if (!v) {
+        if (!d.site.announcement) return fail('目前沒有公告');
+        d.site = { ...d.site, announcement: '', announcementUntil: null, announcementAt: null };
+        logAdmin(d, a, '取消全站公告');
+        return ok(null);
+      }
+      const t = nowOf(d);
+      if (until !== null && until <= t) return fail('結束時間要在現在之後');
+      d.site = { ...d.site, announcement: v, announcementUntil: until, announcementAt: t };
+      logAdmin(d, a, `發布全站公告：${v}（${until === null ? '沒有結束時間' : `到 ${formatUntil(until)}`}）`);
+      return ok(null);
+    });
+  },
+
+  // The demo sends no mail, so there is nothing to show or resend.
+  adminMailStatus(filter: 'problem' | 'all' = 'problem'): Result<MailStatus> {
+    void filter;
+    return fail('示範模式不會寄出通知信，所以沒有寄送紀錄。');
+  },
+
+  adminRetryMail(id: string | null = null): Result<number> {
+    void id;
+    return fail('示範模式不會寄出通知信。');
   },
 
   // ---- demo tools

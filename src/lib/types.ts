@@ -193,6 +193,39 @@ export interface Suspension {
   liftedBy: string | null;
 }
 
+/** Site-wide content the owner edits in the backend (stored with the settings). */
+export interface SiteInfo {
+  /** Words that send a new listing to manual review. */
+  bannedWords: string[];
+  /** Shown on the home page while set and before announcementUntil. */
+  announcement: string;
+  announcementUntil: number | null;
+  /** When it was posted; a closed announcement stays closed until a new one. */
+  announcementAt: number | null;
+}
+
+/** One queued e-mail as admins see it: no address, no body. */
+export interface MailItem {
+  id: string;
+  userId: string;
+  name: string;
+  subject: string;
+  createdAt: number;
+  sentAt: number | null;
+  attempts: number;
+  error: string;
+  state: 'pending' | 'failed' | 'no_address' | 'sent';
+}
+
+export interface MailStatus {
+  pending: number;
+  failed: number;
+  sent24h: number;
+  noAddress: number;
+  oldestPending: number | null;
+  items: MailItem[];
+}
+
 export interface DB {
   version: number;
   clockOffsetMs: number; // demo "fast forward"
@@ -210,6 +243,7 @@ export interface DB {
   favorites: Favorite[];
   savedSearches: SavedSearch[];
   suspensions: Suspension[];
+  site: SiteInfo;
   /** Supabase mode only: who is signed in, and whether they still need a profile. */
   auth?: { identity: string; state: 'needs_signup' | 'ok' | 'suspended' } | null;
   /** Supabase mode only: set when the first load failed (e.g. migrations not applied). */

@@ -1,4 +1,4 @@
-import { calcFee, DEFAULT_SETTINGS } from './rules';
+import { calcFee, DEFAULT_SETTINGS, DEFAULT_SITE } from './rules';
 import { DAY, HOUR, ymdLocal } from './format';
 import type { DB, LedgerEntry, Listing, Message, Order, Review, User } from './types';
 
@@ -459,5 +459,6 @@ export function createSeed(now: number): DB {
     favorites: [],
     savedSearches: [],
     suspensions: [],
+    site: { ...DEFAULT_SITE, bannedWords: [...DEFAULT_SITE.bannedWords] },
   };
 }

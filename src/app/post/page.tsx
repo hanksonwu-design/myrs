@@ -53,7 +53,7 @@ export default function PostPage() {
   const today = ymdLocal(nowOf(d));
   const location = f.location ?? pos.point;
   const input: NewListingInput = { ...f, location };
-  const flagged = findBannedWords(`${f.title} ${f.description} ${f.swapWish}`);
+  const flagged = findBannedWords(`${f.title} ${f.description} ${f.swapWish}`, d.site.bannedWords);
 
   const stepError = (s: number): string | null => {
     if (s === 2) {
