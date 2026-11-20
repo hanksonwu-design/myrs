@@ -272,7 +272,9 @@ export function trustOf(d: DB, userId: string): Trust {
   if (deals === 0) return { score, label: '新朋友', tone: 'new', deals };
   if (score >= 85) return { score, label: '非常可信', tone: 'high', deals };
   if (score >= 70) return { score, label: '可信', tone: 'good', deals };
-  if (score >= 55) return { score, label: '普通', tone: 'ok', deals };
+  // Only low ratings can take the score under the starting 50, so 請留意 means
+  // "people rated this member badly", never just "new here".
+  if (score >= 50) return { score, label: '普通', tone: 'ok', deals };
   return { score, label: '請留意', tone: 'low', deals };
 }
 
