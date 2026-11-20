@@ -7,16 +7,21 @@ import { actions, currentUser, useDB } from '@/lib/store';
 import { Modal } from './ui';
 import { useToast } from './Providers';
 
-const REASONS = ['違禁品或不允許的食品', '疑似詐騙或轉賣', '內容與實物不符', '騷擾或不當言語', '其他'];
-
 const NOUN = { listing: '刊登', user: '使用者', want: '徵求' } as const;
+
+const REASONS: Record<keyof typeof NOUN, string[]> = {
+  listing: ['違禁品或不允許的食品', '疑似詐騙或轉賣', '內容與實物不符', '騷擾或不當言語', '其他'],
+  user: ['違禁品或不允許的食品', '疑似詐騙或轉賣', '內容與實物不符', '騷擾或不當言語', '其他'],
+  want: ['想要違禁品或不允許的物品', '疑似詐騙或廣告', '重複張貼', '騷擾或不當言語', '其他'],
+};
 
 export function ReportButton({ targetType, targetId }: { targetType: keyof typeof NOUN; targetId: string }) {
   const d = useDB()!;
   const router = useRouter();
   const toast = useToast();
   const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState(REASONS[0]);
+  const reasons = REASONS[targetType];
+  const [reason, setReason] = useState(reasons[0]);
   const [detail, setDetail] = useState('');
 
   const [busy, setBusy] = useState(false);
@@ -45,7 +50,7 @@ export function ReportButton({ targetType, targetId }: { targetType: keyof typeo
         onClose={() => setOpen(false)}
       >
         <div className="space-y-2">
-          {REASONS.map((r) => (
+          {reasons.map((r) => (
             <label key={r} className="flex items-center gap-2 rounded-xl border border-slate-200 p-3 text-sm">
               <input type="radio" name="reason" checked={reason === r} onChange={() => setReason(r)} className="accent-brand" />
               {r}

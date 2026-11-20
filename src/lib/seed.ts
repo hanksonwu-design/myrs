@@ -1,10 +1,20 @@
-import { calcFee, DEFAULT_SETTINGS, DEFAULT_SITE } from './rules';
+import { calcFee, DEFAULT_SETTINGS, DEFAULT_SITE, randomInviteCode } from './rules';
 import { DAY, HOUR, ymdLocal } from './format';
 import type { DB, LedgerEntry, Listing, Message, Order, Review, User, Want } from './types';
 
 export const DB_VERSION = 1;
 
 const COLORS = ['#00A078', '#00A8E8', '#F0A000', '#E03050', '#00A038'];
+
+/** Fixed invite codes, so the demo can be explained the same way every time. */
+const SEED_CODES: Record<string, string> = {
+  u_lin: 'MAMA88',
+  u_chen: 'CHEN22',
+  u_wang: 'WANG33',
+  u_huang: 'HUANG5',
+  u_bakery: 'BAKE77',
+  u_admin: 'ADMN99',
+};
 
 /** Demo data for the 大安區 pilot. Times are relative to `now`. */
 export function createSeed(now: number): DB {
@@ -30,6 +40,7 @@ export function createSeed(now: number): DB {
     blocked: [],
     color: COLORS[id.length % COLORS.length],
     createdAt: now - ageDays * DAY,
+    inviteCode: SEED_CODES[id] ?? randomInviteCode(),
     ...extra,
   });
 
@@ -449,6 +460,7 @@ export function createSeed(now: number): DB {
     users,
     listings,
     wants: seedWants(now),
+    invites: [],
     orders,
     ledger,
     messages,

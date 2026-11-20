@@ -11,6 +11,8 @@ import { maskPhone } from '@/lib/format';
 import { activeSuspension, suspensionNote } from '@/lib/staff';
 import type { DB } from '@/lib/types';
 import { useToast } from './Providers';
+import { pendingInvite } from '@/lib/invite';
+import { InviteCodeField, applyInviteAfterSignup } from './InviteCard';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const RESEND_SECONDS = 60;
@@ -25,11 +27,14 @@ export function RemoteLogin({ d, next }: { d: DB; next: string }) {
   const [id, setId] = useState('');
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
+  const [invite, setInvite] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [wait, setWait] = useState(0);
   const me = currentUser(d);
   const state = d.auth?.state;
+
+  useEffect(() => setInvite(pendingInvite()), []);
 
   useEffect(() => {
     if (wait <= 0) return;
@@ -73,9 +78,14 @@ export function RemoteLogin({ d, next }: { d: DB; next: string }) {
     e.preventDefault();
     setBusy(true);
     const r = await remoteAuth.completeSignup(name);
+    if (!r.ok) {
+      setBusy(false);
+      return setError(r.error);
+    }
+    const inv = await applyInviteAfterSignup(invite);
     setBusy(false);
-    if (!r.ok) return setError(r.error);
-    done(r.value.bonus ? `註冊完成，送你 ${r.value.bonus} 點新手點數！` : '註冊完成！');
+    done(`${r.value.bonus ? `註冊完成，送你 ${r.value.bonus} 點新手點數！` : '註冊完成！'}${inv.note}`);
+    if (inv.error) toast(inv.error, 'info');
   };
 
   const Icon = method === 'phone' ? Smartphone : Mail;
@@ -114,6 +124,7 @@ export function RemoteLogin({ d, next }: { d: DB; next: string }) {
             onChange={(e) => setName(e.target.value)}
           />
         </div>
+        <InviteCodeField value={invite} onChange={setInvite} />
         {error && <p className="text-sm text-m-rose">{error}</p>}
         <button className="btn btn-primary w-full" disabled={busy}>
           {busy ? '建立中…' : '完成註冊'}

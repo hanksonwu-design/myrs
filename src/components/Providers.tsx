@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { CircleCheck, CircleX, Info } from 'lucide-react';
 import { actions } from '@/lib/store';
+import { rememberInvite } from '@/lib/invite';
 
 type ToastKind = 'success' | 'error' | 'info';
 interface Toast {
@@ -26,6 +27,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
     setToasts((t) => [...t, { id, kind, text }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3200);
   }, []);
+
+  // A shared link's invite code, kept until the visitor signs up.
+  useEffect(() => rememberInvite(), []);
 
   // Time-based rules (request timeout, auto-complete, food expiry).
   useEffect(() => {

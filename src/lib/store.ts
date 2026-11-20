@@ -18,7 +18,10 @@ import {
   DEFAULT_SETTINGS,
   DEFAULT_SITE,
   findBannedWords,
+  INVITE_DAYS,
+  normalizeInviteCode,
   PHONE_RE,
+  randomInviteCode,
   settingsChanges,
   WANT_DAILY_MAX,
   WANT_DAYS,
@@ -33,6 +36,7 @@ import type {
   AdminLevel,
   Category,
   DB,
+  Invite,
   LatLng,
   LedgerEntry,
   Listing,
@@ -77,11 +81,14 @@ function load(): DB {
         return {
           ...parsed,
           // Admins from before levels existed are owners.
-          users: parsed.users.map((u) => (u.role === 'admin' && !u.adminLevel ? { ...u, adminLevel: 'owner' as const } : u)),
+          users: parsed.users
+            .map((u) => (u.role === 'admin' && !u.adminLevel ? { ...u, adminLevel: 'owner' as const } : u))
+            .map((u) => (u.inviteCode ? u : { ...u, inviteCode: randomInviteCode() })),
           favorites: parsed.favorites ?? [],
           savedSearches: parsed.savedSearches ?? [],
           suspensions: parsed.suspensions ?? [],
           wants: parsed.wants ?? seedWants(Date.now()),
+          invites: parsed.invites ?? [],
           settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
           site: { ...DEFAULT_SITE, ...parsed.site },
         };
@@ -332,6 +339,24 @@ function grantReward(d: DB, userId: string, amount: number, note: string): numbe
   return Math.max(0, give);
 }
 
+/**
+ * userId just completed a deal with otherId. An invited member's first deal with
+ * someone other than the inviter rewards both sides (same as private.settle_invite;
+ * the demo has no e-mail aliases to check).
+ */
+function settleInvite(d: DB, userId: string, otherId: string) {
+  const i = d.invites.find((x) => x.inviteeId === userId && x.rewardedAt === null);
+  if (!i || i.inviterId === otherId) return;
+  const amount = d.settings.inviteReward;
+  if (amount > 0) {
+    i.inviteePoints = grantReward(d, userId, amount, `受 ${nameOf(d, i.inviterId)} 邀請加入的獎勵`);
+    if (userById(d, i.inviterId)?.status === 'active') {
+      i.inviterPoints = grantReward(d, i.inviterId, amount, `邀請 ${nameOf(d, userId)} 加入的獎勵`);
+    }
+  }
+  i.rewardedAt = nowOf(d);
+}
+
 function nameOf(d: DB, id: string) {
   return userById(d, id)?.name ?? '使用者';
 }
@@ -386,6 +411,8 @@ function completeOrder(d: DB, o: Order, message: string) {
     );
     if (!prior) grantReward(d, pid, d.settings.firstOrderReward, '首次完成交易獎勵');
   }
+  settleInvite(d, o.requesterId, o.providerId);
+  settleInvite(d, o.providerId, o.requesterId);
   if (l && l.remaining <= 0 && !d.orders.some((x) => x.listingId === l.id && OPEN_STATUSES.includes(x.status))) {
     l.status = 'closed';
   }
@@ -613,11 +640,40 @@ const localActions = {
         blocked: [],
         color: ['#00A078', '#00A8E8', '#F0A000', '#E03050', '#00A038'][d.users.length % 5],
         createdAt: nowOf(d),
+        inviteCode: randomInviteCode(),
       };
       d.users.push(u);
       addLedger(d, { userId: u.id, type: 'signup_bonus', amount: d.settings.signupBonus, note: '新手點數' });
       d.sessionUserId = u.id;
       return ok(u);
+    });
+  },
+
+  /** Use a neighbour's invite code; returns the inviter's name. */
+  redeemInvite(code: string): Result<string> {
+    return mutate((d) => {
+      const u = requireUser(d);
+      if ('error' in u) return fail(u.error);
+      const c = normalizeInviteCode(code);
+      if (!c) return fail('請輸入邀請碼');
+      const inviter = d.users.find((x) => x.inviteCode === c && x.status !== 'deleted');
+      if (!inviter) return fail('找不到這個邀請碼，請確認有沒有打錯');
+      if (inviter.id === u.id) return fail('不能填自己的邀請碼');
+      if (d.invites.some((x) => x.inviteeId === u.id)) return fail('你已經填過邀請碼了');
+      if (u.createdAt < nowOf(d) - INVITE_DAYS * DAY) return fail(`加入 ${INVITE_DAYS} 天內才能填邀請碼`);
+      if (d.orders.some((o) => o.status === 'completed' && isParty(o, u.id))) return fail('完成第一筆交易前才能填邀請碼');
+      if (d.invites.some((x) => x.inviteeId === inviter.id && x.inviterId === u.id)) return fail('你們不能互相邀請');
+      if (inviter.status !== 'active' || isBlockedBetween(d, u.id, inviter.id)) return fail('這個邀請碼目前不能使用');
+      const invite: Invite = {
+        inviteeId: u.id,
+        inviterId: inviter.id,
+        createdAt: nowOf(d),
+        rewardedAt: null,
+        inviteePoints: 0,
+        inviterPoints: 0,
+      };
+      d.invites.push(invite);
+      return ok(inviter.name);
     });
   },
 

@@ -16,6 +16,8 @@ interface Props {
   /** Where the map starts before anything is chosen. */
   fallback: LatLng;
   mapClassName?: string;
+  /** Shown on the map before a spot is picked. */
+  hint?: string;
 }
 
 /**
@@ -23,7 +25,16 @@ interface Props {
  * current location, tap the map or drag the pin. The name follows the pin until
  * the user types their own.
  */
-export function LocationPicker({ value, onChange, label, labelAuto, onLabel, fallback, mapClassName = 'h-64' }: Props) {
+export function LocationPicker({
+  value,
+  onChange,
+  label,
+  labelAuto,
+  onLabel,
+  fallback,
+  mapClassName = 'h-64',
+  hint = '點地圖選擇面交地點',
+}: Props) {
   const [q, setQ] = useState('');
   const [results, setResults] = useState<Place[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -158,7 +169,7 @@ export function LocationPicker({ value, onChange, label, labelAuto, onLabel, fal
         />
         {!value && (
           <p className="pointer-events-none absolute inset-x-0 top-2 z-[500] mx-auto w-fit rounded-full bg-white/95 px-3 py-1 text-xs font-semibold text-slate-700 shadow">
-            點地圖選擇面交地點
+            {hint}
           </p>
         )}
       </div>

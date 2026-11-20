@@ -9,12 +9,13 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_KEY, SUPABASE_URL } from './backend';
 import { BASE_PATH } from './links';
-import { DEFAULT_SETTINGS, DEFAULT_SITE } from './rules';
+import { DEFAULT_SETTINGS, DEFAULT_SITE, normalizeInviteCode } from './rules';
 import { activeSuspension, suspensionNote } from './staff';
 import type {
   AdminLevel,
   AdminLog,
   DB,
+  Invite,
   LatLng,
   LedgerEntry,
   Listing,
@@ -63,6 +64,7 @@ const SETTINGS_COLUMNS: Record<keyof Settings, string> = {
   signupBonus: 'signup_bonus',
   firstListingReward: 'first_listing_reward',
   firstOrderReward: 'first_order_reward',
+  inviteReward: 'invite_reward',
   monthlyRewardCap: 'monthly_reward_cap',
   freeDailyLimit: 'free_daily_limit',
   newAccountDays: 'new_account_days',
@@ -123,6 +125,15 @@ function toListing(r: Row, exact: Map<string, LatLng>): Listing {
     createdAt: msReq(r.created_at),
   };
 }
+
+const toInvite = (r: Row): Invite => ({
+  inviteeId: str(r.invitee_id),
+  inviterId: str(r.inviter_id),
+  createdAt: msReq(r.created_at),
+  rewardedAt: ms(r.rewarded_at),
+  inviteePoints: num(r.invitee_points),
+  inviterPoints: num(r.inviter_points),
+});
 
 const toWant = (r: Row): Want => ({
   id: str(r.id),
@@ -265,7 +276,11 @@ async function fetchSnapshot(): Promise<DB> {
   const uid = session?.user.id ?? null;
   const signedIn = (table: string, orderBy: string) => (uid ? selectAll(table, orderBy) : Promise.resolve([]));
 
-  const [settings, profiles, listings, reviews, secrets, blocks, orders, ledger, messages, reports, adminLog, reads, favs, searches, susp, wantRows] =
+  // Tables from newer migrations: empty until they are applied.
+  const optionalSignedIn = (table: string, orderBy: string) =>
+    uid ? selectOptional(table, orderBy) : Promise.resolve([] as Row[]);
+
+  const [settings, profiles, listings, reviews, secrets, blocks, orders, ledger, messages, reports, adminLog, reads, favs, searches, susp, wantRows, codeRows, inviteRows] =
     await Promise.all([
       selectAll('settings', 'id'),
       selectAll('profiles', 'created_at'),
@@ -283,7 +298,10 @@ async function fetchSnapshot(): Promise<DB> {
       signedIn('saved_searches', 'created_at'),
       signedIn('suspensions', 'created_at'),
       selectOptional('wants', 'created_at'),
+      optionalSignedIn('invite_codes', 'user_id'),
+      optionalSignedIn('invites', 'created_at'),
     ]);
+  const codes = new Map(codeRows.map((r) => [str(r.user_id), str(r.code)]));
 
   const exact = new Map(secrets.map((r) => [str(r.listing_id), { lat: num(r.lat), lng: num(r.lng) }]));
   const blockedBy = new Map<string, string[]>();
@@ -307,6 +325,7 @@ async function fetchSnapshot(): Promise<DB> {
     color: str(r.color) || '#00A078',
     createdAt: msReq(r.created_at),
     completedDeals: num(r.completed_deals),
+    inviteCode: codes.get(str(r.id)),
   }));
 
   const imagePaths = messages.map((m) => m.image).filter((p): p is string => typeof p === 'string' && p !== '');
@@ -339,6 +358,7 @@ async function fetchSnapshot(): Promise<DB> {
     users,
     listings: listings.map((r) => toListing(r, exact)),
     wants: wantRows.map(toWant),
+    invites: inviteRows.map(toInvite),
     orders: orders.map(toOrder),
     ledger: ledger.map(toLedger),
     messages: msgs,
@@ -381,6 +401,7 @@ function emptySnapshot(error: string): DB {
     users: [],
     listings: [],
     wants: [],
+    invites: [],
     orders: [],
     ledger: [],
     messages: [],
@@ -473,6 +494,7 @@ const REALTIME_TABLES = [
   'saved_searches',
   'suspensions',
   'wants',
+  'invites',
 ];
 
 let channel: RealtimeChannel | null = null;
@@ -673,6 +695,8 @@ export const remoteActions = {
   closeWant: (wantId: string) => rpc<null>('close_want', { p_want: wantId }),
   respondWant: (wantId: string, listingId: string) =>
     rpc<null>('respond_want', { p_want: wantId, p_listing: listingId }),
+
+  redeemInvite: (code: string) => rpc<string>('redeem_invite', { p_code: normalizeInviteCode(code) }),
 
   report: (targetType: Report['targetType'], targetId: string, reason: string) =>
     rpc<boolean>('report', { p_target_type: targetType, p_target_id: targetId, p_reason: reason }),

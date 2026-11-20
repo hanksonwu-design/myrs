@@ -36,12 +36,13 @@ import {
 import { CATEGORIES, LISTING_STATUS_LABEL, ORDER_STATUS_LABEL, wantOpen } from '@/lib/rules';
 import { distanceKm, publicLocationOf } from '@/lib/geo';
 import { directionsUrl } from '@/lib/geocode';
-import type { LatLng } from '@/lib/types';
+import type { LatLng, Listing } from '@/lib/types';
 import { formatDate, formatDistance, timeAgo } from '@/lib/format';
 import { ExpiryTag, ListingThumb } from '@/components/ListingVisuals';
 import { MapView } from '@/components/map/MapView';
 import { Avatar, Modal, ModeBadge, NotFound, OrderStatusBadge, Stars } from '@/components/ui';
 import { BlockButton, ReportButton } from '@/components/ReportBlock';
+import { ShareButton } from '@/components/Share';
 import { RemoveListingButton } from '@/components/RemoveListing';
 import { isStaff } from '@/lib/staff';
 import { IS_REMOTE } from '@/lib/backend';
@@ -371,10 +372,13 @@ function ListingPage() {
             </div>
           )}
 
-          {!isOwner && (
+          {(l.status === 'active' || !isOwner) && (
             <div className="flex items-center justify-end gap-1">
-              <ReportButton targetType="listing" targetId={l.id} />
-              <BlockButton userId={l.ownerId} />
+              {l.status === 'active' && (
+                <ShareButton path={listingPath(l.id)} text={listingShareText(l)} title="分享這則刊登" />
+              )}
+              {!isOwner && <ReportButton targetType="listing" targetId={l.id} />}
+              {!isOwner && <BlockButton userId={l.ownerId} />}
             </div>
           )}
 
@@ -499,6 +503,17 @@ function ListingPage() {
       </Modal>
     </div>
   );
+}
+
+/** What a shared listing says before its link, e.g. in a LINE group. */
+function listingShareText(l: Listing): string {
+  const what =
+    l.mode === 'free'
+      ? '免費分享'
+      : l.mode === 'points'
+        ? `${l.pricePoints} 點`
+        : `想換${l.swapWish.trim() || '其他東西'}`;
+  return `「${l.title}」${what}，在${l.areaLabel}面交。需要的鄰居來 Myrs 看看：`;
 }
 
 // useSearchParams needs a Suspense boundary in a static export.

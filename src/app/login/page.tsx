@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Shield, Smartphone, Store } from 'lucide-react';
 import { actions, currentUser, useDB } from '@/lib/store';
@@ -10,6 +10,8 @@ import { Avatar } from '@/components/ui';
 import { useToast } from '@/components/Providers';
 import { RemoteLogin } from '@/components/RemoteLogin';
 import { IS_REMOTE } from '@/lib/backend';
+import { pendingInvite } from '@/lib/invite';
+import { InviteCodeField, applyInviteAfterSignup } from '@/components/InviteCard';
 
 function LoginInner() {
   const d = useDB()!;
@@ -22,8 +24,10 @@ function LoginInner() {
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
+  const [invite, setInvite] = useState('');
   const [error, setError] = useState('');
   const me = currentUser(d);
+  useEffect(() => setInvite(pendingInvite()), []);
   if (IS_REMOTE) return <RemoteLogin d={d} next={safeNext} />;
 
   const done = (msg: string) => {
@@ -59,8 +63,10 @@ function LoginInner() {
   const register = async (e: React.FormEvent) => {
     e.preventDefault();
     const r = await actions.register(phone, name);
-    if (r.ok) done(`註冊完成，送你 ${d.settings.signupBonus} 點新手點數！`);
-    else setError(r.error);
+    if (!r.ok) return setError(r.error);
+    const inv = await applyInviteAfterSignup(invite);
+    done(`註冊完成，送你 ${d.settings.signupBonus} 點新手點數！${inv.note}`);
+    if (inv.error) toast(inv.error, 'info');
   };
 
   const demoUsers = d.users.filter((u) => u.status === 'active');
@@ -152,6 +158,7 @@ function LoginInner() {
                 onChange={(e) => setName(e.target.value)}
               />
             </div>
+            <InviteCodeField value={invite} onChange={setInvite} />
             {error && <p className="text-sm text-m-rose">{error}</p>}
             <button className="btn btn-primary w-full">完成註冊</button>
           </form>

@@ -52,6 +52,11 @@ export default function AboutPage() {
         </h2>
         <ul className="list-disc space-y-1.5 pl-5 text-sm text-slate-600">
           <li>註冊送 {s.signupBonus} 點；首次刊登送 {s.firstListingReward} 點；首次完成交易送 {s.firstOrderReward} 點。每月獎勵最多 {s.monthlyRewardCap} 點，{s.rewardExpiryMonths} 個月後到期。</li>
+          {s.inviteReward > 0 && (
+            <li>
+              邀請鄰居：對方用你的邀請碼註冊，並完成第一筆交易（對象不能是你）後，你們各得 {s.inviteReward} 點，一樣算在每月獎勵上限內。同一個人換帳號重新註冊，不會再拿一次。
+            </li>
+          )}
           <li>點數只能在 Myrs 內使用，<b>不能兌換現金，也不能轉帳</b>。</li>
           <li>點數交易成交時，提供者付 {Math.round(s.feeRate * 100)}% 手續費（最低 {s.minFee} 點），手續費是平台營運收入。</li>
           <li>免費贈送不會產生點數，完成後提供者得到 1 點「愛心值」，顯示在個人頁。</li>

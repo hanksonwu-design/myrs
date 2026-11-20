@@ -45,6 +45,19 @@ export interface User {
   createdAt: number;
   /** Supabase mode: completed deals counted by the server (others' orders are not visible). */
   completedDeals?: number;
+  /** Code that invites a neighbour. Supabase mode: only the signed-in member's own. */
+  inviteCode?: string;
+}
+
+/** A member who joined with someone's invite code. */
+export interface Invite {
+  inviteeId: string;
+  inviterId: string;
+  createdAt: number;
+  /** Set once the invitee completes a deal with someone other than the inviter. */
+  rewardedAt: number | null;
+  inviteePoints: number;
+  inviterPoints: number;
 }
 
 export interface Listing {
@@ -165,6 +178,8 @@ export interface Settings {
   signupBonus: number;
   firstListingReward: number;
   firstOrderReward: number;
+  /** Points each side gets when an invited member completes a first deal (0 = off). */
+  inviteReward: number;
   monthlyRewardCap: number;
   freeDailyLimit: number;
   newAccountDays: number;
@@ -254,6 +269,7 @@ export interface DB {
   users: User[];
   listings: Listing[];
   wants: Want[];
+  invites: Invite[];
   orders: Order[];
   ledger: LedgerEntry[];
   messages: Message[];

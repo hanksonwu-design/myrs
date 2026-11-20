@@ -612,6 +612,9 @@ function UserDetail({ d, me, u }: { d: DB; me: User; u: User }) {
   const current = activeSuspension(d, u.id);
   const ledger = d.ledger.filter((e) => e.userId === u.id).sort((a, b) => b.createdAt - a.createdAt);
   const held = heldOf(d, u.id);
+  // Only admins and owners load invites; for moderators these stay empty.
+  const invitedBy = d.invites.find((i) => i.inviteeId === u.id);
+  const invited = d.invites.filter((i) => i.inviterId === u.id);
 
   const run = async (p: Promise<{ ok: boolean; error?: string }>, done: string) => {
     setBusy(true);
@@ -642,6 +645,14 @@ function UserDetail({ d, me, u }: { d: DB; me: User; u: User }) {
               公開頁面
             </Link>
           </p>
+          {(invitedBy || invited.length > 0) && (
+            <p className="text-xs text-slate-500">
+              {invitedBy && `由 ${userById(d, invitedBy.inviterId)?.name ?? '已刪除的使用者'} 邀請加入`}
+              {invitedBy && invited.length > 0 && '・'}
+              {invited.length > 0 &&
+                `邀請了 ${invited.length} 人（${invited.filter((i) => i.rewardedAt !== null).length} 人已完成第一筆交易）`}
+            </p>
+          )}
         </div>
       </div>
 
@@ -938,6 +949,7 @@ const SETTING_FIELDS: { key: keyof Settings; label: string; unit: string; min?: 
   { key: 'signupBonus', label: '新手點數', unit: '點' },
   { key: 'firstListingReward', label: '首次刊登獎勵', unit: '點' },
   { key: 'firstOrderReward', label: '首次完成交易獎勵', unit: '點' },
+  { key: 'inviteReward', label: '邀請獎勵', unit: '點（雙方各得，0 = 關閉）' },
   { key: 'monthlyRewardCap', label: '每月獎勵上限', unit: '點' },
   { key: 'rewardExpiryMonths', label: '獎勵點數有效期', unit: '個月' },
   { key: 'freeDailyLimit', label: '免費索取每日上限', unit: '件' },

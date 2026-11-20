@@ -6,6 +6,7 @@ export const DEFAULT_SETTINGS: Settings = {
   signupBonus: 50,
   firstListingReward: 20,
   firstOrderReward: 30,
+  inviteReward: 20,
   monthlyRewardCap: 100,
   freeDailyLimit: 3,
   newAccountDays: 7,
@@ -73,6 +74,15 @@ export const WANT_MAX_OPEN = 3;
 export const WANT_DAILY_MAX = 5;
 export const WANT_MAX_ANSWERS = 3;
 
+/** A new member can use an invite code within this many days of joining. */
+export const INVITE_DAYS = 7;
+const INVITE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+/** Six characters without 0/O or 1/I, like private.new_invite_code. */
+export const randomInviteCode = () =>
+  Array.from({ length: 6 }, () => INVITE_CHARS[Math.floor(Math.random() * INVITE_CHARS.length)]).join('');
+/** Codes ignore case and spaces, as redeem_invite does. */
+export const normalizeInviteCode = (s: string) => s.replace(/\s/g, '').toUpperCase();
+
 /** Whether others can see and answer a want now. */
 export const wantOpen = (w: Want, now: number) => w.status === 'open' && w.expiresAt > now;
 
@@ -130,6 +140,7 @@ const SETTING_LOG: [keyof Settings, string, string][] = [
   ['signupBonus', '新手點數', ' 點'],
   ['firstListingReward', '首次刊登獎勵', ' 點'],
   ['firstOrderReward', '首次完成交易獎勵', ' 點'],
+  ['inviteReward', '邀請獎勵', ' 點'],
   ['monthlyRewardCap', '每月獎勵上限', ' 點'],
   ['rewardExpiryMonths', '獎勵點數有效期', ' 個月'],
   ['freeDailyLimit', '免費索取每日上限', ' 件'],

@@ -15,10 +15,11 @@ import { answersOf, WANT_COLOR, WantIcon, wantTimeLeft } from '@/components/Want
 import { MapView } from '@/components/map/MapView';
 import { Avatar, Modal, NotFound } from '@/components/ui';
 import { BlockButton, ReportButton } from '@/components/ReportBlock';
+import { ShareButton } from '@/components/Share';
 import { TrustBadge } from '@/components/TrustBadge';
 import { useMyPosition } from '@/components/hooks';
 import { useToast } from '@/components/Providers';
-import { userPath } from '@/lib/links';
+import { userPath, wantPath } from '@/lib/links';
 
 const GONE = '找不到這則徵求，可能已經結束或被移除。';
 
@@ -200,6 +201,17 @@ function WantPage() {
           )}
 
           <div className="flex flex-wrap items-center gap-1">
+            {open && (
+              <ShareButton
+                path={wantPath(w.id)}
+                title="分享這則徵求"
+                text={
+                  mine
+                    ? `我在 Myrs 徵求「${w.title}」，地點：${w.areaLabel}。剛好有的鄰居可以刊登給我：`
+                    : `有鄰居在 Myrs 徵求「${w.title}」，地點：${w.areaLabel}。你剛好有的話，可以刊登給對方：`
+                }
+              />
+            )}
             {me && !mine && <ReportButton targetType="want" targetId={w.id} />}
             {me && !mine && <BlockButton userId={w.userId} />}
             {staff && !mine && w.status !== 'removed' && (

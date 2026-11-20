@@ -28,6 +28,7 @@ await db.exec(migration('20261119000006_improvements.sql'));
 await db.exec(migration('20261120000007_admin_levels.sql'));
 await db.exec(migration('20261120000008_admin_tools.sql'));
 await db.exec(migration('20261120000009_wants.sql'));
+await db.exec(migration('20261120000010_invites.sql'));
 console.log('migrations applied');
 
 let failures = 0;
@@ -822,6 +823,93 @@ check((await wstat(WS)) === 'removed' && m6[0].body.includes('原因：重複張
 check((await lastLog('移除徵求')).includes('重複張貼'), 'which is logged');
 check((await err(M1, `select admin_remove_want($1, 'x')`, [WS]))?.includes('已經移除'), 'a want is removed once');
 check(!(await seesWant(W3, WS)) && (await seesWant(W5, WS)), 'a removed want stays visible only to its owner and staff');
+
+console.log('inviting neighbours (migration 10)');
+const I1 = '00000000-0000-0000-0000-0000000004d1';
+const I2 = '00000000-0000-0000-0000-0000000004d2';
+const I3 = '00000000-0000-0000-0000-0000000004d3';
+const I4 = '00000000-0000-0000-0000-0000000004d4';
+const I5 = '00000000-0000-0000-0000-0000000004d5';
+const I6 = '00000000-0000-0000-0000-0000000004d6';
+await su(`insert into auth.users values
+  ('${I1}', '886966600001', null), ('${I2}', '886966600002', null), ('${I3}', '886966600003', null),
+  ('${I4}', '886966600004', null), ('${I5}', null, 'Nei.Ghbor@gmail.com'), ('${I6}', null, 'neighbor+2@gmail.com')`);
+for (const [u, n] of [[I1, '邀請人'], [I2, '新鄰居'], [I3, '老鄰居'], [I4, '晚到的人'], [I5, '別名一'], [I6, '別名二']]) {
+  await one(u, `select complete_signup($1)`, [n]);
+}
+const codeOf = async (u) => (await su(`select code from invite_codes where user_id = $1`, [u]))[0]?.code;
+const C1 = await codeOf(I1);
+check(/^[A-HJ-NP-Z2-9]{6}$/.test(C1 ?? ''), `every new member gets a 6-character code (${C1})`);
+check(
+  Number((await su(`select count(*) c from profiles p where status <> 'deleted' and not exists (select 1 from invite_codes c where c.user_id = p.id)`))[0].c) === 0,
+  'all members have one',
+);
+const seenCodes = await as(I2, `select user_id from invite_codes`);
+check(seenCodes.length === 1 && seenCodes[0].user_id === I2, 'members see only their own code');
+check((await err(null, `select * from invite_codes`))?.includes('permission denied'), 'visitors see no codes');
+const redeemErr = (u, code) => err(u, `select redeem_invite($1)`, [code]);
+check((await redeemErr(I2, ' '))?.includes('請輸入'), 'a code is needed');
+check((await redeemErr(I2, 'ZZZZZZ'))?.includes('找不到'), 'unknown codes are refused');
+check((await redeemErr(I1, C1))?.includes('自己'), 'members cannot use their own code');
+check((await one(I2, `select redeem_invite($1) r`, [` ${C1.slice(0, 3).toLowerCase()} ${C1.slice(3)} `])).r === '邀請人', 'codes ignore case and spaces');
+check((await redeemErr(I2, C1))?.includes('已經填過'), 'one code per member');
+check((await redeemErr(I1, await codeOf(I2)))?.includes('互相邀請'), 'two members cannot invite each other');
+await su(`update profiles set created_at = now() - interval '8 days' where id = $1`, [I4]);
+check((await redeemErr(I4, C1))?.includes('7 天內'), 'codes are used within 7 days of joining');
+await su(`update profiles set created_at = now() where id = $1`, [I4]);
+check((await redeemErr(B, C1))?.includes('第一筆交易前'), 'and before the first completed deal');
+await as(I4, `select toggle_block($1)`, [I1]);
+check((await redeemErr(I4, C1))?.includes('不能使用'), 'not across a block');
+await as(I4, `select toggle_block($1)`, [I1]);
+const seesInvite = async (u) => (await as(u, `select invitee_id from invites where invitee_id = $1`, [I2])).length === 1;
+check((await seesInvite(I1)) && (await seesInvite(I2)) && (await seesInvite(ADM)) && !(await seesInvite(I3)), 'an invite is seen by the two members and admins');
+check((await err(I2, `update invites set rewarded_at = now()`))?.includes('permission denied'), 'invites cannot be written directly');
+
+const deal = async (provider, requester, title) => {
+  const lid = (await one(provider, `select create_listing($1::jsonb) r`, [cloth(title)])).r.id;
+  const oid = (await one(requester, `select request_listing($1, '', '') r`, [lid])).r;
+  await as(provider, `select accept_order($1)`, [oid]);
+  await as(provider, `select mark_done($1)`, [oid]);
+  await as(requester, `select mark_done($1)`, [oid]);
+  return oid;
+};
+const inviteRow = async (u) => (await su(`select * from invites where invitee_id = $1`, [u]))[0];
+const inviteNotes = async (u) => (await su(`select note, amount from ledger where user_id = $1 and note like '%邀請%'`, [u]));
+await deal(I1, I2, '童書一袋');
+check((await inviteRow(I2)).rewarded_at === null && (await inviteNotes(I2)).length === 0, 'a deal with the inviter earns nothing');
+await su(`delete from notifications`);
+await deal(I3, I2, '兒童雨衣');
+const ir = await inviteRow(I2);
+const n2 = await inviteNotes(I2);
+const n1 = await inviteNotes(I1);
+check(
+  ir.rewarded_at !== null && ir.invitee_points === 20 && ir.inviter_points === 20 &&
+    n2.length === 1 && n2[0].note === '受 邀請人 邀請加入的獎勵' && n2[0].amount === 20 &&
+    n1.length === 1 && n1[0].note === '邀請 新鄰居 加入的獎勵' && n1[0].amount === 20,
+  'a first deal with someone else rewards both sides',
+);
+const mi = await mail(I1);
+check(mi.length === 1 && mi[0].subject === '你邀請的 新鄰居 完成了第一筆交易' && mi[0].link === '/me/wallet', 'the inviter is mailed');
+await deal(I3, I2, '兒童雨鞋');
+check((await inviteNotes(I2)).length === 1 && (await inviteNotes(I1)).length === 1, 'only the first deal counts');
+
+await one(I5, `select redeem_invite($1)`, [C1]);
+await deal(I3, I5, '冬季外套');
+check((await inviteRow(I5)).invitee_points === 20, 'another neighbour rewards the inviter again');
+await one(I6, `select redeem_invite($1)`, [C1]);
+await deal(I3, I6, '毛帽');
+const ir6 = await inviteRow(I6);
+check(ir6.rewarded_at !== null && ir6.invitee_points === 0 && ir6.inviter_points === 0, 'an e-mail alias of a rewarded person earns nothing');
+check((await su(`select private.rewards_this_month($1) r`, [I1]))[0].r <= 100, 'invite rewards stay within the monthly cap');
+
+await as(ADM, `select admin_update_settings($1::jsonb)`, [JSON.stringify({ inviteReward: 0 })]);
+check((await lastLog('更新平台參數')).includes('邀請獎勵 20 點 → 0 點'), 'the owner can turn invite rewards off, which is logged');
+await one(I4, `select redeem_invite($1)`, [C1]);
+await su(`delete from notifications`);
+await deal(I3, I4, '圍巾');
+const ir4 = await inviteRow(I4);
+check(ir4.rewarded_at !== null && ir4.invitee_points === 0 && (await mail(I1)).length === 0, 'with rewards off a deal settles the invite without points or mail');
+await as(ADM, `select admin_update_settings($1::jsonb)`, [JSON.stringify({ inviteReward: 20 })]);
 
 const sum = (await su(`select sum(amount)::int s from ledger where type in ('signup_bonus','reward','adjust')`))[0].s;
 const fees = (await su(`select -sum(amount)::int s from ledger where type = 'fee'`))[0].s;

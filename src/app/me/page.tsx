@@ -24,6 +24,7 @@ import { ListingThumb } from '@/components/ListingVisuals';
 import { Avatar, Loading, Modal, ModeBadge, Stars } from '@/components/ui';
 import { useMyPosition, useRequireLogin } from '@/components/hooks';
 import { TrustBadge } from '@/components/TrustBadge';
+import { InviteCard } from '@/components/InviteCard';
 import { useToast } from '@/components/Providers';
 import { IS_REMOTE } from '@/lib/backend';
 import { listingPath, wantPath } from '@/lib/links';
@@ -125,6 +126,8 @@ export default function MePage() {
           </div>
         </div>
       </section>
+
+      <InviteCard d={d} user={user} />
 
       <section className="card p-5">
         <div className="mb-3 flex items-center justify-between">

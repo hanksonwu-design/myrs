@@ -143,6 +143,7 @@ function NewWantForm() {
               setLabelAuto(auto);
             }}
             fallback={pos.point}
+            hint="點地圖選擇大概的位置"
           />
         </div>
 
