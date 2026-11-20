@@ -9,6 +9,7 @@ import { PILOT_NAME } from '@/lib/geo';
 import { Avatar, Loading } from './ui';
 import { IS_REMOTE } from '@/lib/backend';
 import { asset } from '@/lib/links';
+import { hereWithQuery } from './hooks';
 
 const NAV = [
   { href: '/', label: '附近', icon: MapPin },
@@ -23,10 +24,6 @@ function isActive(pathname: string, href: string) {
 }
 
 /** This page with its query (detail pages keep their id in ?id=), for the login "next" link. */
-function hereWithQuery(pathname: string) {
-  return pathname + (typeof window === 'undefined' ? '' : window.location.search);
-}
-
 function CountBadge({ n }: { n: number }) {
   if (!n) return null;
   return (

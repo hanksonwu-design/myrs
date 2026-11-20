@@ -6,13 +6,21 @@ import { currentUser } from '@/lib/store';
 import { PILOT_CENTER } from '@/lib/geo';
 import type { DB, LatLng, User } from '@/lib/types';
 
-/** Redirects to /login when nobody is signed in. Returns the user once known. */
+/** The current page with its query (?id=…), which only the browser knows in a static export. */
+export function hereWithQuery(pathname: string) {
+  return pathname + (typeof window === 'undefined' ? '' : window.location.search);
+}
+
+/**
+ * Redirects to /login when nobody is signed in, coming back to this exact page afterwards
+ * (a mailed link like /messages/view?id=… keeps its id). Returns the user once known.
+ */
 export function useRequireLogin(d: DB | null): User | null {
   const router = useRouter();
   const pathname = usePathname();
   const user = d ? currentUser(d) : null;
   useEffect(() => {
-    if (d && !user) router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+    if (d && !user) router.replace(`/login?next=${encodeURIComponent(hereWithQuery(pathname))}`);
   }, [d, user, router, pathname]);
   return user;
 }
