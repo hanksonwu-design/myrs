@@ -98,6 +98,19 @@ function ListingPage() {
   const fav = isFavorite(d, me?.id, l.id);
   const dealOn = requests.some((o) => o.status === 'accepted' || o.status === 'disputed');
   const canMove = isOwner && ['active', 'pending_review', 'reserved'].includes(l.status);
+  const unavailable = l.status !== 'active' || l.remaining <= 0;
+  const requestLabel = blocked
+    ? '你和對方之間有封鎖'
+    : unavailable
+      ? l.status === 'active'
+        ? '已被預約'
+        : LISTING_STATUS_LABEL[l.status]
+      : l.mode === 'points'
+        ? `用 ${l.pricePoints} 點索取`
+        : l.mode === 'swap'
+          ? '提出交換'
+          : '免費索取';
+  const startRequest = () => (me ? setOpen(true) : router.push(`/login?next=${encodeURIComponent(listingPath(l.id))}`));
 
   const toggleFav = async () => {
     if (!me) return router.push(`/login?next=${encodeURIComponent(listingPath(l.id))}`);
@@ -339,7 +352,8 @@ function ListingPage() {
               </div>
             </div>
           ) : myOpenOrder ? (
-            <div className="card flex items-center justify-between gap-3 p-4">
+            // On phones the bar fixed at the bottom (ActionBar) does this instead.
+            <div className="card hidden items-center justify-between gap-3 p-4 md:flex">
               <div>
                 <p className="font-bold">你已索取</p>
                 <p className="text-sm text-slate-500">狀態：{ORDER_STATUS_LABEL[myOpenOrder.status]}</p>
@@ -352,19 +366,9 @@ function ListingPage() {
               </Link>
             </div>
           ) : (
-            <div className="space-y-2">
-              <button
-                className="btn btn-primary w-full py-3 text-base"
-                disabled={l.status !== 'active' || l.remaining <= 0 || blocked}
-                onClick={() => (me ? setOpen(true) : router.push(`/login?next=${encodeURIComponent(listingPath(l.id))}`))}
-              >
-                {blocked
-                  ? '你和對方之間有封鎖'
-                  : l.mode === 'points'
-                    ? `用 ${l.pricePoints} 點索取`
-                    : l.mode === 'swap'
-                      ? '提出交換'
-                      : '免費索取'}
+            <div className="hidden space-y-2 md:block">
+              <button className="btn btn-primary w-full py-3 text-base" disabled={unavailable || blocked} onClick={startRequest}>
+                {requestLabel}
               </button>
               {me && l.mode === 'points' && (
                 <p className="text-center text-xs text-slate-500">你目前可用 {balance} 點；索取時先凍結，完成才轉給對方。</p>
@@ -501,9 +505,60 @@ function ListingPage() {
           {sending ? '送出中…' : '確認送出'}
         </button>
       </Modal>
+
+      {/* Phones: the main action stays in reach above the bottom tabs, however far the page scrolls. */}
+      {!isOwner && (
+        <>
+          <div className="h-10 md:hidden" aria-hidden />
+          <div className="fixed inset-x-0 bottom-[calc(var(--nav-h)+env(safe-area-inset-bottom))] z-[1050] border-t border-slate-200 bg-white/95 px-4 py-2.5 shadow-[0_-4px_16px_rgba(15,23,42,0.06)] backdrop-blur md:hidden">
+            <div className="mx-auto flex max-w-md items-center gap-3">
+              {myOpenOrder ? (
+                <>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-bold text-slate-800">你已索取</p>
+                    <p className="truncate text-xs text-slate-500">狀態：{ORDER_STATUS_LABEL[myOpenOrder.status]}</p>
+                  </div>
+                  <Link
+                    href={myOpenOrder.acceptedAt ? chatPath(myOpenOrder.id) : '/orders?tab=request'}
+                    className="btn btn-primary px-5 py-3 text-base"
+                  >
+                    {myOpenOrder.acceptedAt ? '前往聊天' : '查看索取'}
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-lg font-bold leading-tight ${PRICE_COLOR[l.mode]}`}>
+                      {l.mode === 'points' ? `${l.pricePoints} 點` : l.mode === 'swap' ? '以物易物' : '免費'}
+                    </p>
+                    <p className="truncate text-xs text-slate-500">
+                      {blocked
+                        ? '你和對方之間有封鎖'
+                        : me && l.mode === 'points'
+                          ? `你目前可用 ${balance} 點`
+                          : l.mode === 'swap'
+                            ? `想換：${l.swapWish}`
+                            : `剩 ${l.remaining} 件`}
+                    </p>
+                  </div>
+                  <button className="btn btn-primary px-5 py-3 text-base" disabled={unavailable || blocked} onClick={startRequest}>
+                    {blocked ? '無法索取' : requestLabel}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
+
+const PRICE_COLOR: Record<Listing['mode'], string> = {
+  free: 'text-brand-dark',
+  points: 'text-amber-700',
+  swap: 'text-sky-700',
+};
 
 /** What a shared listing says before its link, e.g. in a LINE group. */
 function listingShareText(l: Listing): string {

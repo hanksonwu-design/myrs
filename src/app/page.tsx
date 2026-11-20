@@ -3,7 +3,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { BellPlus, BellRing, List, LocateFixed, Map as MapIcon, PackageSearch, Search, Sparkles } from 'lucide-react';
+import {
+  BellPlus,
+  BellRing,
+  ChevronDown,
+  List,
+  LocateFixed,
+  Map as MapIcon,
+  PackageSearch,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+} from 'lucide-react';
 import { actions, currentUser, nowOf, useDB } from '@/lib/store';
 import { IS_REMOTE } from '@/lib/backend';
 import { searchListings, searchWants } from '@/lib/search';
@@ -15,12 +26,39 @@ import { Announcement } from '@/components/Announcement';
 import { ImpactStrip } from '@/components/Impact';
 import { InstallBanner } from '@/components/Install';
 import { MapView } from '@/components/map/MapView';
-import { Empty } from '@/components/ui';
+import { Empty, Modal } from '@/components/ui';
 import { useMyPosition } from '@/components/hooks';
 import { useToast } from '@/components/Providers';
 import { listingPath, wantPath } from '@/lib/links';
 
 const ZOOM_FOR_RADIUS: Record<number, number> = { 1: 15, 3: 13, 5: 12, 10: 11 };
+const MODE_TEXT: Record<Mode, string> = { free: '免費', points: '點數', swap: '以物易物' };
+
+/** One row of choices in the 篩選 sheet; applies at once. */
+function Choice<T extends string | number>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: readonly (readonly [T, string])[];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <fieldset>
+      <legend className="mb-2 text-sm font-semibold text-slate-700">{label}</legend>
+      <div className="flex flex-wrap gap-2">
+        {options.map(([v, text]) => (
+          <button key={String(v)} className={`chip ${value === v ? 'chip-on' : 'chip-off'}`} aria-pressed={value === v} onClick={() => onChange(v)}>
+            {text}
+          </button>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
 const KIND_KEY = 'myrs-home-kind';
 type Kind = 'share' | 'want';
 
@@ -38,6 +76,7 @@ export default function NearbyPage() {
   const [sort, setSort] = useState<'near' | 'new'>('near');
   const [view, setView] = useState<'list' | 'map'>('list');
   const [hover, setHover] = useState<string | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
 
   // Coming back from a want keeps the 徵求 tab; read after mount (the page is pre-rendered).
   useEffect(() => {
@@ -69,6 +108,18 @@ export default function NearbyPage() {
 
   const wants = kind === 'want';
   const nextRadius = RADIUS_OPTIONS.find((r) => r > radius);
+  // Settings in the 篩選 sheet that differ from the defaults (徵求 have no trade method).
+  const modeOn = !wants && mode !== 'all';
+  const filterCount = Number(modeOn) + Number(radius !== 1) + Number(sort !== 'near');
+  const filterSummary = [`${radius} 公里內`, sort === 'near' ? '距離最近' : '最新', modeOn ? MODE_TEXT[mode as Mode] : '']
+    .filter(Boolean)
+    .join('・');
+  const resetFilters = () => {
+    setMode('all');
+    setRadius(1);
+    setSort('near');
+  };
+  const centre = pos.source === 'gps' ? '你附近' : '大安森林公園附近';
   const keyword = q.trim();
   const alertCat = category === 'all' ? null : category;
   const subscribed =
@@ -134,21 +185,28 @@ export default function NearbyPage() {
   return (
     <div>
       <Announcement d={d} />
+      {/* Short, so the first listings show on a phone's first screen. */}
       {!user && (
-        <section className="mb-4 overflow-hidden rounded-3xl bg-gradient-to-br from-brand to-m-green p-5 text-white sm:p-7">
-          <p className="text-sm font-semibold opacity-90">分享吾需⇄換取所需</p>
-          <h1 className="mt-1 text-2xl font-bold sm:text-3xl">打開就看到 1 公里內，鄰居分享的食物與衣物</h1>
-          <p className="mt-2 max-w-xl text-sm opacity-90">
-            多餘的東西刊登出來，需要的人用點數、以物易物或免費索取。找不到的，也可以發徵求。註冊就送{' '}
-            {d.settings.signupBonus} 點。
-          </p>
-          <div className="mt-4 flex gap-2">
-            <Link href="/login" className="btn bg-white text-brand-dark hover:bg-brand-soft">
+        <section className="mb-3 flex items-center gap-3 rounded-2xl bg-gradient-to-br from-brand to-m-green p-4 text-white sm:gap-6 sm:rounded-3xl sm:p-6">
+          <div className="min-w-0 flex-1">
+            <p className="hidden text-sm font-semibold opacity-90 sm:block">分享吾需⇄換取所需</p>
+            {/* Two whole phrases, so a phone breaks the line between them and not inside a word. */}
+            <h1 className="text-lg font-bold leading-snug sm:mt-1 sm:text-2xl">
+              <span className="inline-block">鄰居分享的食物和衣物</span>
+              <span className="hidden sm:inline">，</span>
+              <span className="inline-block">就在 1 公里內</span>
+            </h1>
+            <p className="mt-1 text-xs leading-relaxed opacity-90 sm:text-sm">
+              免費、點數或以物易物；找不到的，也能發徵求。註冊送 {d.settings.signupBonus} 點。
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-col items-center gap-1.5">
+            <Link href="/login" className="btn bg-white px-3.5 py-2 text-brand-dark hover:bg-brand-soft">
               <Sparkles className="size-4" />
               免費註冊
             </Link>
-            <Link href="/about" className="btn border border-white/50 text-white hover:bg-white/10">
-              怎麼運作
+            <Link href="/about" className="text-xs font-semibold underline underline-offset-2 opacity-90 hover:opacity-100">
+              怎麼運作？
             </Link>
           </div>
         </section>
@@ -179,18 +237,31 @@ export default function NearbyPage() {
           ))}
         </div>
         <div className="flex gap-2">
-          <label className="relative flex-1">
+          <label className="relative min-w-0 flex-1">
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
             <input
               className="input pl-9"
-              placeholder={wants ? '搜尋徵求：外套、鮮奶…' : '搜尋：麵包、童裝、外套…'}
+              placeholder={wants ? '搜尋徵求：外套、鮮奶…' : '搜尋：麵包、童裝…'}
               value={q}
               onChange={(e) => setQ(e.target.value)}
               aria-label="搜尋"
             />
           </label>
           <button
-            className="btn btn-outline px-3 md:hidden"
+            className={`btn relative shrink-0 px-3 ${filterCount ? 'border border-brand bg-brand-soft text-brand-dark' : 'btn-outline'}`}
+            onClick={() => setFilterOpen(true)}
+            aria-label={filterCount ? `篩選（已設定 ${filterCount} 項）` : '篩選'}
+          >
+            <SlidersHorizontal className="size-4" />
+            篩選
+            {filterCount > 0 && (
+              <span className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-brand text-[11px] font-bold text-white">
+                {filterCount}
+              </span>
+            )}
+          </button>
+          <button
+            className="btn btn-outline shrink-0 px-3 md:hidden"
             onClick={() => setView(view === 'list' ? 'map' : 'list')}
             aria-label={view === 'list' ? '切換到地圖' : '切換到列表'}
           >
@@ -198,7 +269,7 @@ export default function NearbyPage() {
             {view === 'list' ? '地圖' : '列表'}
           </button>
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]">
+        <div className="flex items-center gap-2">
           {(
             [
               ['all', '全部'],
@@ -210,77 +281,87 @@ export default function NearbyPage() {
               {label}
             </button>
           ))}
-          {!wants && (
-            <>
-              <span className="mx-1 w-px shrink-0 bg-slate-300" />
-              {(
-                [
-                  ['all', '所有方式'],
-                  ['free', '免費'],
-                  ['points', '點數'],
-                  ['swap', '以物易物'],
-                ] as const
-              ).map(([v, label]) => (
-                <button key={v} className={`chip ${mode === v ? 'chip-on' : 'chip-off'}`} onClick={() => setMode(v)}>
-                  {label}
-                </button>
-              ))}
-            </>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
-          <span className="flex items-center gap-1">
-            <span className="text-slate-500">範圍</span>
-            <select
-              className="rounded-lg border border-slate-300 bg-white px-2 py-1 font-semibold"
-              value={radius}
-              onChange={(e) => setRadius(Number(e.target.value))}
-              aria-label="搜尋範圍"
-            >
-              {RADIUS_OPTIONS.map((r) => (
-                <option key={r} value={r}>
-                  {r} 公里內
-                </option>
-              ))}
-            </select>
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="text-slate-500">排序</span>
-            <select
-              className="rounded-lg border border-slate-300 bg-white px-2 py-1 font-semibold"
-              value={sort}
-              onChange={(e) => setSort(e.target.value as 'near' | 'new')}
-              aria-label="排序"
-            >
-              <option value="near">距離最近</option>
-              <option value="new">{wants ? '最新發布' : '最新刊登'}</option>
-            </select>
-          </span>
           <button
-            className="flex items-center gap-1 text-slate-600 hover:text-brand"
-            onClick={() => (pos.source === 'gps' ? pos.reset() : pos.locate((m) => toast(m, 'info')))}
-            disabled={pos.locating}
+            className="ml-auto flex min-w-0 items-center gap-0.5 truncate text-sm text-slate-500 hover:text-brand"
+            onClick={() => setFilterOpen(true)}
           >
-            <LocateFixed className="size-4" />
-            {pos.locating ? '定位中…' : pos.source === 'gps' ? '我的位置（改回試點中心）' : '大安森林公園（使用我的位置）'}
+            <span className="truncate">{filterSummary}</span>
+            <ChevronDown className="size-4 shrink-0" />
           </button>
         </div>
       </div>
+
+      <Modal open={filterOpen} title="篩選" onClose={() => setFilterOpen(false)}>
+        <div className="space-y-5">
+          {!wants && (
+            <Choice
+              label="交易方式"
+              value={mode}
+              options={[
+                ['all', '全部'],
+                ['free', '免費'],
+                ['points', '點數'],
+                ['swap', '以物易物'],
+              ]}
+              onChange={setMode}
+            />
+          )}
+          <Choice label="範圍" value={radius} options={RADIUS_OPTIONS.map((r) => [r, `${r} 公里內`])} onChange={setRadius} />
+          <Choice
+            label="排序"
+            value={sort}
+            options={[
+              ['near', '距離最近'],
+              ['new', wants ? '最新發布' : '最新刊登'],
+            ]}
+            onChange={setSort}
+          />
+          <fieldset>
+            <legend className="mb-2 text-sm font-semibold text-slate-700">從哪裡算距離</legend>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className={`chip ${pos.source !== 'gps' ? 'chip-on' : 'chip-off'}`}
+                aria-pressed={pos.source !== 'gps'}
+                onClick={() => pos.reset()}
+              >
+                大安森林公園
+              </button>
+              <button
+                className={`chip ${pos.source === 'gps' ? 'chip-on' : 'chip-off'}`}
+                aria-pressed={pos.source === 'gps'}
+                onClick={() => pos.locate((m) => toast(m, 'info'))}
+                disabled={pos.locating}
+              >
+                <LocateFixed className="size-4" />
+                {pos.locating ? '定位中…' : '我現在的位置'}
+              </button>
+            </div>
+          </fieldset>
+        </div>
+        <div className="mt-6 flex gap-2">
+          <button className="btn btn-outline" onClick={resetFilters} disabled={!filterCount}>
+            重設
+          </button>
+          <button className="btn btn-primary flex-1" onClick={() => setFilterOpen(false)}>
+            看 {wants ? wantHits.length : hits.length} 則{wants ? '徵求' : '分享'}
+          </button>
+        </div>
+      </Modal>
 
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         {wants ? (
           <>
             <p className="text-sm text-slate-600">
-              {radius} 公里內有 <b className="text-violet-700">{wantHits.length}</b> 則徵求
-              <span className="text-slate-400">　你有的話，可以刊登給對方</span>
+              {centre} {radius} 公里內有 <b className="text-violet-700">{wantHits.length}</b> 則徵求
+              <span className="hidden text-slate-400 sm:inline">　你有的話，可以刊登給對方</span>
             </p>
             {newWantButton('發徵求', true)}
           </>
         ) : (
           <>
             <p className="text-sm text-slate-600">
-              {radius} 公里內有 <b className="text-brand-dark">{hits.length}</b> 則分享
-              <span className="text-slate-400">　位置為約略範圍，對方接受後才顯示精確地點</span>
+              {centre} {radius} 公里內有 <b className="text-brand-dark">{hits.length}</b> 則分享
+              <span className="hidden text-slate-400 sm:inline">　位置為約略範圍，對方接受後才顯示精確地點</span>
             </p>
             {keyword &&
               (subscribed ? (

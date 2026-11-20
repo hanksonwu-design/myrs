@@ -12,6 +12,11 @@
     sans-serif;
 }
 
+:root {
+  /* Height of the phone's bottom tabs (AppShell), not counting the safe area; bars that sit on top of them use it. */
+  --nav-h: 56px;
+}
+
 html,
 body {
   background: #f6f8f7;
