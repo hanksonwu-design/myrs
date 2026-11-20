@@ -50,6 +50,7 @@ export function createSeed(now: number): DB {
     }),
     user('u_admin', 'Myrs 管理員', '0900000000', '平台營運團隊', 120, {
       role: 'admin',
+      adminLevel: 'owner',
       color: '#334155',
     }),
   ];
@@ -457,5 +458,6 @@ export function createSeed(now: number): DB {
     lastRead: {},
     favorites: [],
     savedSearches: [],
+    suspensions: [],
   };
 }

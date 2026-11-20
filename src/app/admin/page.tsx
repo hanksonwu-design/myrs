@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, CheckCircle2, Flag, Gauge, ListChecks, ScrollText, Settings2, Users } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Flag, Gauge, ListChecks, ScrollText, Search, Settings2, Users } from 'lucide-react';
 import {
   actions,
   balanceOf,
@@ -16,10 +16,13 @@ import {
 } from '@/lib/store';
 import { activeWithin } from '@/lib/search';
 import { PILOT_CENTER, PILOT_NAME } from '@/lib/geo';
-import { formatDateTime, maskPhone, timeAgo } from '@/lib/format';
-import { LISTING_STATUS_LABEL, MODE_LABEL } from '@/lib/rules';
-import type { DB, Settings } from '@/lib/types';
+import { DAY, formatDate, formatDateTime, timeAgo } from '@/lib/format';
+import { LISTING_STATUS_LABEL, MODE_LABEL, ORDER_STATUS_LABEL } from '@/lib/rules';
+import { IS_REMOTE } from '@/lib/backend';
+import { activeSuspension, formatUntil, hasLevel, isStaff, LEVEL_DUTIES, LEVEL_LABEL, levelOf } from '@/lib/staff';
+import type { AdminLevel, DB, LedgerEntry, Settings, User } from '@/lib/types';
 import { ListingThumb } from '@/components/ListingVisuals';
+import { RemoveListingButton } from '@/components/RemoveListing';
 import { Avatar, Loading, Modal, ModeBadge } from '@/components/ui';
 import { useRequireLogin } from '@/components/hooks';
 import { PointsHealth } from '@/components/PointsHealth';
@@ -27,6 +30,17 @@ import { useToast } from '@/components/Providers';
 import { listingPath, userPath } from '@/lib/links';
 
 type Tab = 'dash' | 'listings' | 'reports' | 'disputes' | 'users' | 'settings' | 'log';
+
+/** The lowest level that sees each tab; the server checks the same levels. */
+const TAB_LEVEL: Record<Tab, AdminLevel> = {
+  dash: 'admin',
+  listings: 'moderator',
+  reports: 'moderator',
+  disputes: 'admin',
+  users: 'admin',
+  settings: 'owner',
+  log: 'admin',
+};
 
 const GATE_LISTINGS = 30;
 const GATE_RATE = 0.4;
@@ -36,10 +50,10 @@ export default function AdminPage() {
   const user = useRequireLogin(d);
   const [tab, setTab] = useState<Tab>('dash');
   if (!user) return <Loading />;
-  if (user.role !== 'admin') {
+  if (!isStaff(user)) {
     return (
       <div className="mx-auto max-w-md py-16 text-center">
-        <p className="text-slate-500">只有管理員可以進入後台。</p>
+        <p className="text-slate-500">只有管理團隊可以進入後台。</p>
         <p className="mt-1 text-sm text-slate-400">示範：到「我的 → 示範工具」切換成「Myrs 管理員」。</p>
         <Link href="/me" className="btn btn-outline mt-4">
           前往我的
@@ -52,7 +66,8 @@ export default function AdminPage() {
   const openReportTargets = new Set(d.reports.filter((r) => r.status === 'open').map((r) => r.targetId)).size;
   const disputes = d.orders.filter((o) => o.status === 'disputed').length;
 
-  const tabs: { id: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
+  const level = levelOf(user)!;
+  const allTabs: { id: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'dash', label: '儀表板', icon: <Gauge className="size-4" /> },
     { id: 'listings', label: '刊登審核', icon: <ListChecks className="size-4" />, badge: pendingListings },
     { id: 'reports', label: '檢舉', icon: <Flag className="size-4" />, badge: openReportTargets },
@@ -61,15 +76,22 @@ export default function AdminPage() {
     { id: 'settings', label: '參數', icon: <Settings2 className="size-4" /> },
     { id: 'log', label: '紀錄', icon: <ScrollText className="size-4" /> },
   ];
+  const tabs = allTabs.filter((t) => hasLevel(user, TAB_LEVEL[t.id]));
+  const current = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
 
   return (
     <div className="mx-auto max-w-5xl">
-      <h1 className="mb-3 text-xl font-bold sm:text-2xl">管理後台</h1>
+      <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 className="text-xl font-bold sm:text-2xl">管理後台</h1>
+        <p className="text-sm text-slate-500">
+          你的權限：<b className="text-slate-700">{LEVEL_LABEL[level]}</b>・{LEVEL_DUTIES[level]}
+        </p>
+      </div>
       <div className="-mx-4 mb-4 flex gap-1.5 overflow-x-auto px-4 pb-1">
         {tabs.map((t) => (
           <button
             key={t.id}
-            className={`chip shrink-0 gap-1.5 ${tab === t.id ? 'chip-on' : 'chip-off'}`}
+            className={`chip shrink-0 gap-1.5 ${current === t.id ? 'chip-on' : 'chip-off'}`}
             onClick={() => setTab(t.id)}
           >
             {t.icon}
@@ -82,13 +104,13 @@ export default function AdminPage() {
           </button>
         ))}
       </div>
-      {tab === 'dash' && <Dashboard d={d} />}
-      {tab === 'listings' && <ListingReview d={d} />}
-      {tab === 'reports' && <Reports d={d} />}
-      {tab === 'disputes' && <Disputes d={d} />}
-      {tab === 'users' && <UserAdmin d={d} />}
-      {tab === 'settings' && <SettingsForm d={d} />}
-      {tab === 'log' && <Log d={d} />}
+      {current === 'dash' && <Dashboard d={d} />}
+      {current === 'listings' && <ListingReview d={d} me={user} />}
+      {current === 'reports' && <Reports d={d} me={user} />}
+      {current === 'disputes' && <Disputes d={d} />}
+      {current === 'users' && <UserAdmin d={d} me={user} />}
+      {current === 'settings' && <SettingsForm d={d} />}
+      {current === 'log' && <Log d={d} />}
     </div>
   );
 }
@@ -184,7 +206,7 @@ function Dashboard({ d }: { d: DB }) {
 
 // ---------------------------------------------------------------- listing review
 
-function ListingReview({ d }: { d: DB }) {
+function ListingReview({ d, me }: { d: DB; me: User }) {
   const toast = useToast();
   const list = d.listings.filter((l) => l.status === 'pending_review');
   if (!list.length) return <p className="card p-6 text-center text-sm text-slate-500">沒有待審核的刊登。</p>;
@@ -213,26 +235,22 @@ function ListingReview({ d }: { d: DB }) {
                 )}
               </div>
             </div>
-            <div className="flex gap-2">
-              <button
-                className="btn btn-primary py-1.5"
-                onClick={async () => {
-                  const r = await actions.adminSetListingStatus(l.id, 'active');
-                  toast(r.ok ? '已核准上架' : r.error, r.ok ? 'success' : 'error');
-                }}
-              >
-                核准
-              </button>
-              <button
-                className="btn btn-danger py-1.5"
-                onClick={async () => {
-                  const r = await actions.adminSetListingStatus(l.id, 'removed');
-                  toast(r.ok ? '已下架' : r.error, r.ok ? 'success' : 'error');
-                }}
-              >
-                下架
-              </button>
-            </div>
+            {l.ownerId === me.id ? (
+              <p className="text-xs text-slate-500 sm:w-40">這是你自己的刊登，需要由其他管理團隊成員審核。</p>
+            ) : (
+              <div className="flex gap-2">
+                <button
+                  className="btn btn-primary py-1.5"
+                  onClick={async () => {
+                    const r = await actions.adminSetListingStatus(l.id, 'active');
+                    toast(r.ok ? '已核准上架' : r.error, r.ok ? 'success' : 'error');
+                  }}
+                >
+                  核准
+                </button>
+                <RemoveListingButton listing={l} />
+              </div>
+            )}
           </li>
         );
       })}
@@ -242,7 +260,7 @@ function ListingReview({ d }: { d: DB }) {
 
 // ---------------------------------------------------------------- reports
 
-function Reports({ d }: { d: DB }) {
+function Reports({ d, me }: { d: DB; me: User }) {
   const toast = useToast();
   const open = d.reports.filter((r) => r.status === 'open').sort((a, b) => b.createdAt - a.createdAt);
   const groups = new Map<string, typeof open>();
@@ -286,24 +304,31 @@ function Reports({ d }: { d: DB }) {
                 </li>
               ))}
             </ul>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button className="btn btn-outline py-1.5" onClick={() => run(first.id, 'dismiss', '已駁回')}>
-                駁回
-              </button>
-              {l && (
-                <button className="btn btn-danger py-1.5" onClick={() => run(first.id, 'remove_listing', '已下架刊登')}>
-                  下架刊登
+            {target?.id === me.id ? (
+              <p className="mt-3 text-xs text-slate-500">這是針對你的檢舉，需要由其他管理團隊成員處理。</p>
+            ) : (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button className="btn btn-outline py-1.5" onClick={() => run(first.id, 'dismiss', '已駁回')}>
+                  駁回
                 </button>
+                {l && (
+                  <button className="btn btn-danger py-1.5" onClick={() => run(first.id, 'remove_listing', '已下架刊登')}>
+                    下架刊登
+                  </button>
               )}
-              {target && target.role !== 'admin' && target.status === 'active' && (
+              {target && hasLevel(me, 'admin') && target.role !== 'admin' && target.status === 'active' && (
                 <button
                   className="btn btn-danger py-1.5"
-                  onClick={() => confirm(`確定停權「${target.name}」？`) && run(first.id, 'suspend_user', '已停權')}
+                  onClick={() =>
+                    confirm(`確定停權「${target.name}」？原因會記為「經檢舉確認違反使用規則」，沒有期限；要寫其他原因或期限，請到「使用者」分頁操作。`) &&
+                    run(first.id, 'suspend_user', `已停權${TOLD}`)
+                  }
                 >
                   停權 {target.name}
                 </button>
               )}
             </div>
+            )}
           </li>
         );
       })}
@@ -379,129 +404,486 @@ function Disputes({ d }: { d: DB }) {
 
 // ---------------------------------------------------------------- users
 
-function UserAdmin({ d }: { d: DB }) {
-  const toast = useToast();
-  const [adjust, setAdjust] = useState<string | null>(null);
-  const [amount, setAmount] = useState('');
-  const [note, setNote] = useState('');
-  const users = d.users.filter((u) => u.status !== 'deleted');
-  const target = adjust ? userById(d, adjust) : null;
-  const say = async (p: Promise<{ ok: boolean; error?: string }>, done: string) => {
-    const r = await p;
-    toast(r.ok ? done : (r.error ?? ''), r.ok ? 'success' : 'error');
-  };
+type UserFilter = 'all' | 'suspended' | 'merchant' | 'staff';
+
+const USER_FILTERS: { id: UserFilter; label: string; test: (u: User) => boolean }[] = [
+  { id: 'all', label: '全部', test: () => true },
+  { id: 'suspended', label: '停權中', test: (u) => u.status === 'suspended' },
+  { id: 'merchant', label: '商家', test: (u) => u.merchant },
+  { id: 'staff', label: '管理團隊', test: (u) => u.role === 'admin' },
+];
+
+const LEDGER_LABEL: Record<LedgerEntry['type'], string> = {
+  signup_bonus: '新手點數',
+  reward: '平台獎勵',
+  hold: '索取凍結',
+  release: '退回',
+  transfer_in: '點數收入',
+  fee: '手續費',
+  adjust: '管理員調整',
+};
+
+function UserBadges({ u }: { u: User }) {
+  const level = levelOf(u);
+  return (
+    <>
+      {level && <span className="rounded-full bg-slate-100 px-1.5 text-xs font-semibold text-slate-600">{LEVEL_LABEL[level]}</span>}
+      {u.merchant && <span className="rounded-full bg-emerald-50 px-1.5 text-xs font-semibold text-brand-dark">商家</span>}
+      {u.status === 'suspended' && <span className="rounded-full bg-rose-50 px-1.5 text-xs font-semibold text-m-rose">停權中</span>}
+    </>
+  );
+}
+
+function UserAdmin({ d, me }: { d: DB; me: User }) {
+  const [q, setQ] = useState('');
+  const [filter, setFilter] = useState<UserFilter>('all');
+  const [open, setOpen] = useState<string | null>(null);
+  const all = d.users.filter((u) => u.status !== 'deleted');
+  const query = q.trim().toLowerCase();
+  const test = USER_FILTERS.find((f) => f.id === filter)!.test;
+  const users = all
+    .filter((u) => test(u) && (!query || u.name.toLowerCase().includes(query)))
+    .sort((a, b) => b.createdAt - a.createdAt);
+  const target = open ? userById(d, open) : null;
 
   return (
     <>
-      <div className="card overflow-x-auto">
-        <table className="w-full min-w-[720px] text-sm">
-          <thead className="bg-slate-50 text-left text-xs text-slate-500">
-            <tr>
-              <th className="p-3">使用者</th>
-              <th className="p-3">手機</th>
-              <th className="p-3 text-right">點數</th>
-              <th className="p-3 text-right">愛心</th>
-              <th className="p-3 text-right">評價</th>
-              <th className="p-3">狀態</th>
-              <th className="p-3">操作</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {users.map((u) => {
-              const rating = ratingOf(d, u.id);
-              const held = heldOf(d, u.id);
-              return (
-                <tr key={u.id}>
-                  <td className="p-3">
-                    <Link href={userPath(u.id)} className="flex items-center gap-2 font-semibold hover:underline">
-                      <Avatar user={u} size={28} />
-                      {u.name}
-                      {u.role === 'admin' && <span className="text-xs text-slate-400">管理員</span>}
-                      {u.merchant && <span className="text-xs text-brand">商家</span>}
-                    </Link>
-                  </td>
-                  <td className="p-3 text-slate-500">{maskPhone(u.phone)}</td>
-                  <td className="p-3 text-right">
-                    {balanceOf(d, u.id)}
-                    {held > 0 && <span className="text-xs text-slate-400">（凍結 {held}）</span>}
-                  </td>
-                  <td className="p-3 text-right">{u.loveScore}</td>
-                  <td className="p-3 text-right">{rating.count ? `${rating.avg.toFixed(1)}（${rating.count}）` : '－'}</td>
-                  <td className="p-3">
-                    <span className={u.status === 'active' ? 'text-brand-dark' : 'font-semibold text-m-rose'}>
-                      {u.status === 'active' ? '正常' : '停權'}
-                    </span>
-                  </td>
-                  <td className="p-3">
-                    {u.role !== 'admin' && (
-                      <div className="flex flex-wrap gap-1.5">
-                        <button
-                          className="btn btn-outline px-2.5 py-1 text-xs"
-                          onClick={() =>
-                            say(
-                              actions.adminSetUserStatus(u.id, u.status === 'active' ? 'suspended' : 'active'),
-                              u.status === 'active' ? '已停權' : '已恢復',
-                            )
-                          }
-                        >
-                          {u.status === 'active' ? '停權' : '恢復'}
-                        </button>
-                        <button
-                          className="btn btn-outline px-2.5 py-1 text-xs"
-                          onClick={() => say(actions.adminSetMerchant(u.id, !u.merchant), u.merchant ? '已取消商家' : '已設為試點商家')}
-                        >
-                          {u.merchant ? '取消商家' : '設為商家'}
-                        </button>
-                        <button
-                          className="btn btn-outline px-2.5 py-1 text-xs"
-                          onClick={() => {
-                            setAdjust(u.id);
-                            setAmount('');
-                            setNote('');
-                          }}
-                        >
-                          調整點數
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+          <input
+            className="input pl-9"
+            placeholder="搜尋會員名稱"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            aria-label="搜尋會員名稱"
+          />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {USER_FILTERS.map((f) => (
+            <button key={f.id} className={`chip ${filter === f.id ? 'chip-on' : 'chip-off'}`} onClick={() => setFilter(f.id)}>
+              {f.label}
+              <span className="ml-1 text-xs opacity-70">{all.filter(f.test).length}</span>
+            </button>
+          ))}
+        </div>
       </div>
-      <Modal open={!!target} title={`調整「${target?.name ?? ''}」的點數`} onClose={() => setAdjust(null)}>
-        <p className="mb-3 text-sm text-slate-500">目前可用 {target ? balanceOf(d, target.id) : 0} 點。輸入負數可以扣點。每次調整都會留下紀錄。</p>
-        <label className="label" htmlFor="adj-amount">
-          點數
-        </label>
-        <input
-          id="adj-amount"
-          className="input"
-          inputMode="numeric"
-          placeholder="例如 20 或 -10"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-        />
-        <label className="label mt-3" htmlFor="adj-note">
-          原因
-        </label>
-        <input id="adj-note" className="input" placeholder="例如：客服補償" value={note} onChange={(e) => setNote(e.target.value)} />
-        <button
-          className="btn btn-primary mt-4 w-full"
-          onClick={async () => {
-            if (!target) return;
-            const r = await actions.adminAdjustPoints(target.id, Number(amount), note);
-            if (!r.ok) return toast(r.error, 'error');
-            toast('已調整點數');
-            setAdjust(null);
-          }}
-        >
-          確認調整
-        </button>
+      {!users.length ? (
+        <p className="card p-6 text-center text-sm text-slate-500">找不到符合的會員。</p>
+      ) : (
+        <div className="card overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
+            <thead className="bg-slate-50 text-left text-xs text-slate-500">
+              <tr>
+                <th className="p-3">會員</th>
+                <th className="p-3">加入</th>
+                <th className="p-3 text-right">點數</th>
+                <th className="p-3 text-right">評價</th>
+                <th className="p-3 text-right">被檢舉</th>
+                <th className="p-3" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {users.map((u) => {
+                const rating = ratingOf(d, u.id);
+                const held = heldOf(d, u.id);
+                const reports = reportsAgainst(d, u.id).length;
+                return (
+                  <tr key={u.id} className="cursor-pointer hover:bg-slate-50" onClick={() => setOpen(u.id)}>
+                    <td className="p-3">
+                      <span className="flex flex-wrap items-center gap-1.5 font-semibold">
+                        <Avatar user={u} size={28} />
+                        {u.name}
+                        <UserBadges u={u} />
+                      </span>
+                    </td>
+                    <td className="p-3 text-slate-500">{formatDate(u.createdAt)}</td>
+                    <td className="p-3 text-right">
+                      {balanceOf(d, u.id)}
+                      {held > 0 && <span className="text-xs text-slate-400">（凍結 {held}）</span>}
+                    </td>
+                    <td className="p-3 text-right">{rating.count ? `${rating.avg.toFixed(1)}（${rating.count}）` : '－'}</td>
+                    <td className={`p-3 text-right ${reports ? 'font-semibold text-m-rose' : 'text-slate-400'}`}>{reports || '－'}</td>
+                    <td className="p-3 text-right">
+                      <button className="btn btn-outline px-2.5 py-1 text-xs">管理</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <Modal open={!!target} title={target ? `會員「${target.name}」` : ''} onClose={() => setOpen(null)}>
+        {target && <UserDetail key={target.id} d={d} me={me} u={target} />}
       </Modal>
     </>
+  );
+}
+
+/** Reports filed against a member or any of their listings. */
+function reportsAgainst(d: DB, userId: string) {
+  const mine = new Set(d.listings.filter((l) => l.ownerId === userId).map((l) => l.id));
+  return d.reports.filter((r) => (r.targetType === 'user' ? r.targetId === userId : mine.has(r.targetId)));
+}
+
+/** Supabase mode e-mails the member; the demo has no mail. */
+const TOLD = IS_REMOTE ? '，並寄信通知對方' : '';
+
+const SUSPEND_PRESETS = ['多次爽約', '疑似詐騙', '騷擾其他會員', '販售禁售品', '濫用點數或獎勵'];
+const SUSPEND_DAYS = [1, 3, 7, 14, 30, 90];
+const REPORT_STATUS_LABEL = { open: '待處理', resolved: '已處理', dismissed: '已駁回' } as const;
+
+function Section({ title, count, children }: { title: string; count?: number; children: React.ReactNode }) {
+  return (
+    <section className="mt-4">
+      <h3 className="mb-1.5 text-sm font-bold">
+        {title}
+        {count !== undefined && <span className="ml-1 font-normal text-slate-400">{count}</span>}
+      </h3>
+      {children}
+    </section>
+  );
+}
+
+function UserDetail({ d, me, u }: { d: DB; me: User; u: User }) {
+  const toast = useToast();
+  const owner = hasLevel(me, 'owner');
+  const [panel, setPanel] = useState<'none' | 'suspend' | 'points' | 'role'>('none');
+  const [reason, setReason] = useState('');
+  const [days, setDays] = useState('7');
+  const [amount, setAmount] = useState('');
+  const [note, setNote] = useState('');
+  const [level, setLevel] = useState<AdminLevel | 'member'>(levelOf(u) ?? 'member');
+  const [busy, setBusy] = useState(false);
+
+  const now = nowOf(d);
+  const staff = u.role === 'admin';
+  const currentLevel = levelOf(u) ?? 'member';
+  const otherOwner = currentLevel === 'owner' && u.id !== me.id;
+  const rating = ratingOf(d, u.id);
+  const listings = d.listings.filter((l) => l.ownerId === u.id).sort((a, b) => b.createdAt - a.createdAt);
+  const orders = d.orders
+    .filter((o) => o.requesterId === u.id || o.providerId === u.id)
+    .sort((a, b) => b.createdAt - a.createdAt);
+  const completed = u.completedDeals ?? orders.filter((o) => o.status === 'completed').length;
+  const reports = reportsAgainst(d, u.id).sort((a, b) => b.createdAt - a.createdAt);
+  const suspensions = d.suspensions.filter((s) => s.userId === u.id).sort((a, b) => b.createdAt - a.createdAt);
+  const current = activeSuspension(d, u.id);
+  const ledger = d.ledger.filter((e) => e.userId === u.id).sort((a, b) => b.createdAt - a.createdAt);
+  const held = heldOf(d, u.id);
+
+  const run = async (p: Promise<{ ok: boolean; error?: string }>, done: string) => {
+    setBusy(true);
+    const r = await p;
+    setBusy(false);
+    if (!r.ok) {
+      toast(r.error ?? '', 'error');
+      return false;
+    }
+    toast(done);
+    setPanel('none');
+    return true;
+  };
+  const toggle = (p: typeof panel) => setPanel((x) => (x === p ? 'none' : p));
+
+  return (
+    <div className="text-sm">
+      <div className="flex items-center gap-3">
+        <Avatar user={u} size={48} />
+        <div className="min-w-0">
+          <p className="flex flex-wrap items-center gap-1.5 text-base font-bold">
+            {u.name}
+            <UserBadges u={u} />
+          </p>
+          <p className="text-xs text-slate-500">
+            {formatDate(u.createdAt)} 加入・
+            <Link href={userPath(u.id)} className="underline">
+              公開頁面
+            </Link>
+          </p>
+        </div>
+      </div>
+
+      {u.status === 'suspended' && (
+        <p className="mt-3 rounded-xl bg-rose-50 p-3 text-rose-800">
+          {current ? (
+            <>
+              停權原因：{current.reason}
+              <br />
+              {current.until ? `預定 ${formatUntil(current.until)} 自動恢復` : '無期限，需要手動恢復'}
+            </>
+          ) : (
+            '這個帳號停權中。'
+          )}
+        </p>
+      )}
+
+      <div className="mt-3 grid grid-cols-4 gap-2 text-center">
+        {[
+          ['點數', `${balanceOf(d, u.id)}${held ? `+${held}` : ''}`],
+          ['愛心', u.loveScore],
+          ['評價', rating.count ? rating.avg.toFixed(1) : '－'],
+          ['完成交易', completed],
+        ].map(([k, v]) => (
+          <div key={k} className="rounded-xl bg-slate-50 p-2">
+            <p className="text-[11px] text-slate-500">{k}</p>
+            <p className="font-bold">{v}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {!staff && u.status === 'active' && (
+          <button className={`btn px-2.5 py-1 text-xs ${panel === 'suspend' ? 'btn-danger' : 'btn-outline'}`} onClick={() => toggle('suspend')}>
+            停權
+          </button>
+        )}
+        {u.status === 'suspended' && (
+          <button
+            className="btn btn-primary px-2.5 py-1 text-xs"
+            disabled={busy}
+            onClick={() => confirm(`確定恢復「${u.name}」的帳號？`) && run(actions.adminSetUserStatus(u.id, 'active'), `已恢復${TOLD}`)}
+          >
+            恢復帳號
+          </button>
+        )}
+        {!staff && (
+          <button
+            className="btn btn-outline px-2.5 py-1 text-xs"
+            disabled={busy}
+            onClick={() => run(actions.adminSetMerchant(u.id, !u.merchant), u.merchant ? '已取消商家' : '已設為試點商家')}
+          >
+            {u.merchant ? '取消商家' : '設為商家'}
+          </button>
+        )}
+        {owner && (
+          <button className={`btn px-2.5 py-1 text-xs ${panel === 'points' ? 'btn-primary' : 'btn-outline'}`} onClick={() => toggle('points')}>
+            調整點數
+          </button>
+        )}
+        {owner && u.status === 'active' && (
+          <button className={`btn px-2.5 py-1 text-xs ${panel === 'role' ? 'btn-primary' : 'btn-outline'}`} onClick={() => toggle('role')}>
+            管理權限
+          </button>
+        )}
+      </div>
+      {staff && <p className="mt-1.5 text-xs text-slate-500">管理團隊成員不能停權；如有需要，請先由擁有者撤銷權限。</p>}
+
+      {panel === 'suspend' && (
+        <div className="mt-3 rounded-xl border border-rose-200 p-3">
+          <p className="label">停權原因{IS_REMOTE && '（會寄給對方）'}</p>
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {SUSPEND_PRESETS.map((p) => (
+              <button key={p} type="button" className={`chip ${reason === p ? 'chip-on' : 'chip-off'}`} onClick={() => setReason(p)}>
+                {p}
+              </button>
+            ))}
+          </div>
+          <textarea
+            className="input min-h-16"
+            maxLength={200}
+            placeholder="寫下原因，例如：連續三次答應面交卻沒出現"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            aria-label="停權原因"
+          />
+          <label className="label mt-2" htmlFor="suspend-days">
+            停權期間
+          </label>
+          <select id="suspend-days" className="input" value={days} onChange={(e) => setDays(e.target.value)}>
+            {SUSPEND_DAYS.map((n) => (
+              <option key={n} value={n}>
+                {n} 天後自動恢復
+              </option>
+            ))}
+            <option value="">無期限（需要手動恢復）</option>
+          </select>
+          <p className="mt-2 text-xs text-slate-500">停權後對方不能登入使用，進行中的索取會取消並退回凍結點數，刊登也會暫時隱藏。</p>
+          <button
+            className="btn btn-danger mt-2 w-full"
+            disabled={busy || !reason.trim()}
+            onClick={() =>
+              run(actions.adminSetUserStatus(u.id, 'suspended', reason, days ? Number(days) : null), `已停權${TOLD}`)
+            }
+          >
+            確認停權
+          </button>
+        </div>
+      )}
+
+      {panel === 'points' && (
+        <div className="mt-3 rounded-xl border border-slate-200 p-3">
+          <p className="mb-2 text-xs text-slate-500">輸入負數可以扣點。每次調整都會留下紀錄。</p>
+          <label className="label" htmlFor="adj-amount">
+            點數
+          </label>
+          <input
+            id="adj-amount"
+            className="input"
+            inputMode="numeric"
+            placeholder="例如 20 或 -10"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+          <label className="label mt-2" htmlFor="adj-note">
+            原因
+          </label>
+          <input id="adj-note" className="input" placeholder="例如：客服補償" value={note} onChange={(e) => setNote(e.target.value)} />
+          <button
+            className="btn btn-primary mt-3 w-full"
+            disabled={busy}
+            onClick={async () => {
+              if (await run(actions.adminAdjustPoints(u.id, Number(amount), note), '已調整點數')) {
+                setAmount('');
+                setNote('');
+              }
+            }}
+          >
+            確認調整
+          </button>
+        </div>
+      )}
+
+      {panel === 'role' && (
+        <div className="mt-3 rounded-xl border border-slate-200 p-3">
+          {otherOwner ? (
+            <p className="text-slate-600">其他擁有者的權限只能由本人調整。</p>
+          ) : (
+            <>
+              <p className="label">管理權限</p>
+              <div className="space-y-1.5">
+                {(['member', 'moderator', 'admin', 'owner'] as const).map((x) => (
+                  <label
+                    key={x}
+                    className={`flex cursor-pointer gap-2 rounded-xl border p-2 ${level === x ? 'border-brand bg-emerald-50' : 'border-slate-200'}`}
+                  >
+                    <input type="radio" name="level" className="mt-1" checked={level === x} onChange={() => setLevel(x)} />
+                    <span>
+                      <b>{LEVEL_LABEL[x]}</b>
+                      {x === currentLevel && <span className="ml-1 text-xs text-slate-400">（目前）</span>}
+                      <span className="block text-xs text-slate-500">{x === 'member' ? '沒有後台權限' : LEVEL_DUTIES[x]}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <button
+                className="btn btn-primary mt-3 w-full"
+                disabled={busy || level === currentLevel}
+                onClick={() =>
+                  (level !== 'owner' || confirm(`擁有者可以指派管理團隊、修改參數和調整點數，而且其他擁有者不能撤銷他。確定把「${u.name}」設為擁有者？`)) &&
+                  run(actions.adminSetRole(u.id, level), `已把「${u.name}」改為${LEVEL_LABEL[level]}${TOLD}`)
+                }
+              >
+                更新權限
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      <Section title="刊登" count={listings.length}>
+        {listings.length ? (
+          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-100">
+            {listings.slice(0, 6).map((l) => (
+              <li key={l.id} className="flex items-center gap-2 p-2">
+                <Link href={listingPath(l.id)} className="min-w-0 flex-1 truncate hover:underline">
+                  {l.title}
+                </Link>
+                <span className="shrink-0 text-xs text-slate-500">{LISTING_STATUS_LABEL[l.status]}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-slate-400">還沒有刊登。</p>
+        )}
+      </Section>
+
+      <Section title="交易" count={orders.length}>
+        {orders.length ? (
+          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-100">
+            {orders.slice(0, 6).map((o) => (
+              <li key={o.id} className="flex items-center gap-2 p-2">
+                <span className="shrink-0 rounded bg-slate-100 px-1 text-[11px] text-slate-600">{o.requesterId === u.id ? '索取' : '提供'}</span>
+                <span className="min-w-0 flex-1 truncate">{listingById(d, o.listingId)?.title ?? '（已刪除的刊登）'}</span>
+                <span className="shrink-0 text-xs text-slate-500">
+                  {ORDER_STATUS_LABEL[o.status]}・{timeAgo(o.createdAt, now)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-slate-400">還沒有交易。</p>
+        )}
+      </Section>
+
+      <Section title="被檢舉" count={reports.length}>
+        {reports.length ? (
+          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-100">
+            {reports.slice(0, 6).map((r) => (
+              <li key={r.id} className="p-2">
+                <p>
+                  {r.targetType === 'listing' && (
+                    <span className="text-slate-500">刊登「{listingById(d, r.targetId)?.title}」：</span>
+                  )}
+                  {r.reason}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {r.reporterId === 'system' ? '系統偵測' : userById(d, r.reporterId)?.name}・{timeAgo(r.createdAt, now)}・
+                  {REPORT_STATUS_LABEL[r.status]}
+                </p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-slate-400">沒有被檢舉過。</p>
+        )}
+      </Section>
+
+      <Section title="停權紀錄" count={suspensions.length}>
+        {suspensions.length ? (
+          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-100">
+            {suspensions.map((s) => (
+              <li key={s.id} className="p-2">
+                <p>{s.reason}</p>
+                <p className="text-xs text-slate-400">
+                  {formatDateTime(s.createdAt)}・{s.createdBy ? userById(d, s.createdBy)?.name : '系統'}・
+                  {s.until ? `${Math.max(1, Math.round((s.until - s.createdAt) / DAY))} 天` : '無期限'}・
+                  {!s.liftedAt
+                    ? '停權中'
+                    : s.liftedBy
+                      ? `${userById(d, s.liftedBy)?.name ?? '管理員'} 已恢復`
+                      : '到期自動恢復'}
+                </p>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-slate-400">沒有停權紀錄。</p>
+        )}
+      </Section>
+
+      <Section title="點數紀錄" count={ledger.length}>
+        {ledger.length ? (
+          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-100">
+            {ledger.slice(0, 8).map((e) => (
+              <li key={e.id} className="flex items-center gap-2 p-2">
+                <span className="min-w-0 flex-1 truncate">
+                  {LEDGER_LABEL[e.type]}
+                  {e.note && <span className="text-slate-400">・{e.note}</span>}
+                </span>
+                <span className="shrink-0 text-xs text-slate-400">{formatDate(e.createdAt)}</span>
+                <span className={`w-12 shrink-0 text-right font-semibold ${e.amount < 0 ? 'text-m-rose' : 'text-brand-dark'}`}>
+                  {e.amount > 0 ? `+${e.amount}` : e.amount}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-slate-400">沒有點數紀錄。</p>
+        )}
+      </Section>
+    </div>
   );
 }
 

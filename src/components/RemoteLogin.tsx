@@ -8,6 +8,7 @@ import { remoteAuth, type LoginMethod } from '@/lib/remote';
 import { LOGIN_METHODS } from '@/lib/backend';
 import { PHONE_RE } from '@/lib/rules';
 import { maskPhone } from '@/lib/format';
+import { activeSuspension, suspensionNote } from '@/lib/staff';
 import type { DB } from '@/lib/types';
 import { useToast } from './Providers';
 
@@ -86,7 +87,7 @@ export function RemoteLogin({ d, next }: { d: DB; next: string }) {
       <div className="space-y-4">
         <p className="flex items-start gap-2 rounded-xl bg-rose-50 p-3 text-sm text-m-rose">
           <ShieldAlert className="mt-0.5 size-4 shrink-0" />
-          這個帳號已被停權，請聯絡客服。
+          {suspensionNote(activeSuspension(d, me?.id))}
         </p>
         <button className="btn btn-outline w-full" onClick={() => actions.logout()}>
           登出

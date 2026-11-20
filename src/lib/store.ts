@@ -17,6 +17,7 @@ import { calcFee, DEFAULT_SETTINGS, findBannedWords, PHONE_RE } from './rules';
 import { createSeed, DB_VERSION } from './seed';
 import { DAY, HOUR, ymdLocal } from './format';
 import type {
+  AdminLevel,
   Category,
   DB,
   LatLng,
@@ -30,6 +31,7 @@ import type {
   Settings,
   User,
 } from './types';
+import { activeSuspension, hasLevel, LEVEL_LABEL, levelError, levelOf, suspensionNote } from './staff';
 
 const KEY = 'myrs-demo-v1';
 let db: DB | null = null;
@@ -58,8 +60,11 @@ function load(): DB {
       if (parsed && parsed.version === DB_VERSION) {
         return {
           ...parsed,
+          // Admins from before levels existed are owners.
+          users: parsed.users.map((u) => (u.role === 'admin' && !u.adminLevel ? { ...u, adminLevel: 'owner' as const } : u)),
           favorites: parsed.favorites ?? [],
           savedSearches: parsed.savedSearches ?? [],
+          suspensions: parsed.suspensions ?? [],
           settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
         };
       }
@@ -221,10 +226,10 @@ export function isBlockedBetween(d: DB, a: string, b: string): boolean {
   return !!(ua?.blocked.includes(b) || ub?.blocked.includes(a));
 }
 
-/** Who may see the exact meeting spot: owner, admin, or a requester whose deal is on. */
+/** Who may see the exact meeting spot: owner, admin or owner level staff, or a requester whose deal is on. */
 export function canSeeExact(d: DB, l: Listing, userId: string | null | undefined): boolean {
   if (!userId) return false;
-  if (l.ownerId === userId || userById(d, userId)?.role === 'admin') return true;
+  if (l.ownerId === userId || hasLevel(userById(d, userId), 'admin')) return true;
   return d.orders.some(
     (o) =>
       o.listingId === l.id &&
@@ -426,7 +431,45 @@ function runMaintenance(d: DB): boolean {
       }
     }
   }
+  for (const s of d.suspensions) {
+    const u = userById(d, s.userId);
+    if (!s.liftedAt && s.until !== null && s.until <= t && u?.status === 'suspended') {
+      liftSuspension(d, u, null);
+      changed = true;
+    }
+  }
   return changed;
+}
+
+function suspendMember(d: DB, admin: User, user: User, reason: string, days: number | null) {
+  const t = nowOf(d);
+  d.suspensions.push({
+    id: uid('sp'),
+    userId: user.id,
+    reason,
+    until: days ? t + days * DAY : null,
+    createdBy: admin.id,
+    createdAt: t,
+    liftedAt: null,
+    liftedBy: null,
+  });
+  user.status = 'suspended';
+  cancelRequestsOf(d, user.id);
+}
+
+function liftSuspension(d: DB, user: User, by: string | null) {
+  for (const s of d.suspensions) {
+    if (s.userId === user.id && !s.liftedAt) {
+      s.liftedAt = nowOf(d);
+      s.liftedBy = by;
+    }
+  }
+  user.status = 'active';
+}
+
+/** True when `u` is the only active owner left. */
+function lastOwner(d: DB, u: User) {
+  return levelOf(u) === 'owner' && !d.users.some((x) => x.id !== u.id && x.status === 'active' && levelOf(x) === 'owner');
 }
 
 /** A suspended member's unanswered requests, both ways, end now. */
@@ -441,10 +484,10 @@ function requireUser(d: DB): User | { error: string } {
   return u ?? { error: '請先登入' };
 }
 
-function requireAdmin(d: DB): User | { error: string } {
+function requireLevel(d: DB, min: AdminLevel): User | { error: string } {
   const u = currentUser(d);
   if (!u) return { error: '請先登入' };
-  if (u.role !== 'admin') return { error: '只有管理員可以執行這個操作' };
+  if (!hasLevel(u, min)) return { error: levelError(min) };
   return u;
 }
 
@@ -508,7 +551,7 @@ const localActions = {
     return mutate((d) => {
       const u = d.users.find((x) => x.phone === phone && x.status !== 'deleted');
       if (!u) return fail('NOT_FOUND');
-      if (u.status === 'suspended') return fail('這個帳號已被停權，請聯絡客服。');
+      if (u.status === 'suspended') return fail(suspensionNote(activeSuspension(d, u.id)));
       d.sessionUserId = u.id;
       return ok(u);
     });
@@ -543,6 +586,7 @@ const localActions = {
   loginAs(userId: string): Result {
     return mutate((d) => {
       const u = userById(d, userId);
+      if (u?.status === 'suspended') return fail(suspensionNote(activeSuspension(d, u.id)));
       if (!u || u.status !== 'active') return fail('這個帳號無法登入');
       d.sessionUserId = u.id;
       return ok(null);
@@ -574,6 +618,7 @@ const localActions = {
     return mutate((d) => {
       const u = requireUser(d);
       if ('error' in u) return fail(u.error);
+      if (lastOwner(d, u)) return fail('至少要留一位擁有者，請先指派另一位擁有者');
       for (const o of d.orders) {
         if (isParty(o, u.id) && OPEN_STATUSES.includes(o.status)) {
           cancelOrder(d, o, '對方已刪除帳號');
@@ -585,6 +630,8 @@ const localActions = {
       const target = userById(d, u.id)!;
       target.status = 'deleted';
       target.phone = `deleted-${target.id}`;
+      target.role = 'member';
+      target.adminLevel = null;
       d.sessionUserId = null;
       return ok(null);
     });
@@ -989,13 +1036,15 @@ const localActions = {
   },
 
   // ---- admin
-  adminSetListingStatus(listingId: string, status: 'active' | 'removed'): Result {
+  adminSetListingStatus(listingId: string, status: 'active' | 'removed', reason = ''): Result {
     return mutate((d) => {
-      const a = requireAdmin(d);
+      const a = requireLevel(d, 'moderator');
       if ('error' in a) return fail(a.error);
+      if (reason.trim().length > 200) return fail('下架原因最多 200 個字');
       const l = listingById(d, listingId);
       if (!l) return fail('找不到這則刊登');
       if (status === 'active') {
+        if (l.ownerId === a.id) return fail('不能審核自己的刊登，請由其他管理團隊成員處理');
         if (l.status !== 'pending_review') return fail('只有待審核的刊登可以核准');
         if (l.expiresOn && l.expiresOn < ymdLocal(nowOf(d))) return fail('這項食品已經過期，不能核准');
         // Approving means the admin checked it: flagged words and open reports are settled.
@@ -1011,23 +1060,32 @@ const localActions = {
         return ok(null);
       }
       if (l.status === 'removed') return fail('這則刊登已經下架了');
+      const why = reason.trim() || '不符合刊登規則';
       for (const o of d.orders) {
         if (o.listingId === l.id && OPEN_STATUSES.includes(o.status)) {
-          cancelOrder(d, o, '刊登已被管理員下架');
+          cancelOrder(d, o, `刊登已被管理員下架：${why}`);
         }
       }
       l.status = 'removed';
-      logAdmin(d, a, `下架刊登「${l.title}」`);
+      for (const r of d.reports) {
+        if (r.targetId === l.id && r.status === 'open') {
+          r.status = 'resolved';
+          r.handledBy = a.id;
+        }
+      }
+      logAdmin(d, a, `下架刊登「${l.title}」（${why}）`);
       return ok(null);
     });
   },
 
   adminHandleReport(reportId: string, action: 'dismiss' | 'remove_listing' | 'suspend_user'): Result {
     return mutate((d) => {
-      const a = requireAdmin(d);
+      const a = requireLevel(d, 'moderator');
       if ('error' in a) return fail(a.error);
       const r = d.reports.find((x) => x.id === reportId);
       if (!r || r.status !== 'open') return fail('這筆檢舉已處理過');
+      const reportedUser = r.targetType === 'user' ? r.targetId : listingById(d, r.targetId)?.ownerId;
+      if (reportedUser === a.id) return fail('不能處理針對自己的檢舉，請由其他管理團隊成員處理');
       const close = (status: 'resolved' | 'dismissed') => {
         for (const x of d.reports) {
           if (x.targetId === r.targetId && x.status === 'open') {
@@ -1056,11 +1114,12 @@ const localActions = {
         logAdmin(d, a, `依檢舉下架刊登「${l.title}」`);
         return ok(null);
       }
+      if (!hasLevel(a, 'admin')) return fail('停權需要「管理員」以上的權限');
       const targetUserId = r.targetType === 'user' ? r.targetId : listingById(d, r.targetId)?.ownerId;
       const target = targetUserId ? userById(d, targetUserId) : null;
-      if (!target || target.role === 'admin') return fail('無法停權這個帳號');
-      target.status = 'suspended';
-      cancelRequestsOf(d, target.id);
+      if (!target || target.status !== 'active') return fail('無法停權這個帳號');
+      if (target.role === 'admin') return fail('不能停權管理團隊成員，請先由擁有者撤銷權限');
+      suspendMember(d, a, target, '經檢舉確認違反使用規則', null);
       close('resolved');
       logAdmin(d, a, `依檢舉停權「${target.name}」`);
       return ok(null);
@@ -1069,7 +1128,7 @@ const localActions = {
 
   adminResolveDispute(orderId: string, outcome: 'complete' | 'refund', note: string): Result {
     return mutate((d) => {
-      const a = requireAdmin(d);
+      const a = requireLevel(d, 'admin');
       if ('error' in a) return fail(a.error);
       const o = orderById(d, orderId);
       if (!o || o.status !== 'disputed') return fail('這筆交易不在爭議中');
@@ -1084,24 +1143,51 @@ const localActions = {
     });
   },
 
-  adminSetUserStatus(userId: string, status: 'active' | 'suspended'): Result {
+  adminSetUserStatus(userId: string, status: 'active' | 'suspended', reason = '', days: number | null = null): Result {
     return mutate((d) => {
-      const a = requireAdmin(d);
+      const a = requireLevel(d, 'admin');
       if ('error' in a) return fail(a.error);
       const u = userById(d, userId);
       if (!u || u.status === 'deleted') return fail('找不到這個使用者');
-      if (u.role === 'admin') return fail('不能停權管理員');
-      const was = u.status;
-      u.status = status;
-      if (status === 'suspended' && was !== 'suspended') cancelRequestsOf(d, u.id);
-      logAdmin(d, a, `${status === 'active' ? '恢復' : '停權'}使用者「${u.name}」`);
+      if (u.role === 'admin') return fail('不能停權管理團隊成員，請先由擁有者撤銷權限');
+      if (status === 'suspended') {
+        const why = reason.trim();
+        if (u.status === 'suspended') return fail('這個帳號已經停權了');
+        if (!why) return fail('請填寫停權原因');
+        if (why.length > 200) return fail('停權原因最多 200 個字');
+        if (days !== null && (!Number.isInteger(days) || days < 1 || days > 365)) return fail('停權天數要在 1 到 365 天之間');
+        suspendMember(d, a, u, why, days);
+        logAdmin(d, a, `停權使用者「${u.name}」（${days === null ? '無期限' : `${days} 天`}，${why}）`);
+        return ok(null);
+      }
+      if (u.status !== 'suspended') return fail('這個帳號沒有被停權');
+      liftSuspension(d, u, a.id);
+      logAdmin(d, a, `恢復使用者「${u.name}」`);
+      return ok(null);
+    });
+  },
+
+  adminSetRole(userId: string, level: AdminLevel | 'member'): Result {
+    return mutate((d) => {
+      const a = requireLevel(d, 'owner');
+      if ('error' in a) return fail(a.error);
+      const u = userById(d, userId);
+      if (!u || u.status === 'deleted') return fail('找不到這個使用者');
+      if (u.status !== 'active') return fail('停權中的帳號不能加入管理團隊，請先恢復');
+      const old = levelOf(u) ?? 'member';
+      if (old === level) return fail(`對方已經是「${LEVEL_LABEL[level]}」了`);
+      if (old === 'owner' && u.id !== a.id) return fail('不能更改其他擁有者的權限');
+      if (old === 'owner' && lastOwner(d, u)) return fail('至少要留一位擁有者，請先指派另一位擁有者');
+      u.role = level === 'member' ? 'member' : 'admin';
+      u.adminLevel = level === 'member' ? null : level;
+      logAdmin(d, a, `把「${u.name}」從${LEVEL_LABEL[old]}改為${LEVEL_LABEL[level]}`);
       return ok(null);
     });
   },
 
   adminSetMerchant(userId: string, merchant: boolean): Result {
     return mutate((d) => {
-      const a = requireAdmin(d);
+      const a = requireLevel(d, 'admin');
       if ('error' in a) return fail(a.error);
       const u = userById(d, userId);
       if (!u) return fail('找不到這個使用者');
@@ -1113,7 +1199,7 @@ const localActions = {
 
   adminAdjustPoints(userId: string, amount: number, note: string): Result {
     return mutate((d) => {
-      const a = requireAdmin(d);
+      const a = requireLevel(d, 'owner');
       if ('error' in a) return fail(a.error);
       const u = userById(d, userId);
       if (!u) return fail('找不到這個使用者');
@@ -1128,7 +1214,7 @@ const localActions = {
 
   adminUpdateSettings(patch: Partial<Settings>): Result {
     return mutate((d) => {
-      const a = requireAdmin(d);
+      const a = requireLevel(d, 'owner');
       if ('error' in a) return fail(a.error);
       const atLeastOne = ['requestTimeoutHours', 'autoCompleteHours', 'reviewWindowDays', 'reportHideThreshold'];
       for (const [k, v] of Object.entries(patch)) {

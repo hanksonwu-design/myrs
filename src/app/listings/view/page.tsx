@@ -40,6 +40,9 @@ import { ExpiryTag, ListingThumb } from '@/components/ListingVisuals';
 import { MapView } from '@/components/map/MapView';
 import { Avatar, Modal, ModeBadge, NotFound, OrderStatusBadge, Stars } from '@/components/ui';
 import { BlockButton, ReportButton } from '@/components/ReportBlock';
+import { RemoveListingButton } from '@/components/RemoveListing';
+import { isStaff } from '@/lib/staff';
+import { IS_REMOTE } from '@/lib/backend';
 import { LocationPicker } from '@/components/LocationPicker';
 import { TrustBadge } from '@/components/TrustBadge';
 import { useMyPosition } from '@/components/hooks';
@@ -65,11 +68,11 @@ function ListingPage() {
 
   const l = listingById(d, id);
   const me = currentUser(d);
-  if (!l || l.status === 'removed' && l.ownerId !== me?.id && me?.role !== 'admin') {
+  if (!l || (l.status === 'removed' && l.ownerId !== me?.id && !isStaff(me))) {
     return <NotFound text="找不到這則刊登，可能已被下架。" />;
   }
   const owner = userById(d, l.ownerId);
-  const involved = !!me && (l.ownerId === me.id || me.role === 'admin' || d.orders.some((o) => o.listingId === l.id && o.requesterId === me.id));
+  const involved = !!me && (l.ownerId === me.id || isStaff(me) || d.orders.some((o) => o.listingId === l.id && o.requesterId === me.id));
   // Same rule as the server: a suspended member's listings are hidden from everyone else.
   if (owner && owner.status !== 'active' && !involved) {
     return <NotFound text="找不到這則刊登，可能已被下架。" />;
@@ -350,6 +353,15 @@ function ListingPage() {
             <div className="flex items-center justify-end gap-1">
               <ReportButton targetType="listing" targetId={l.id} />
               <BlockButton userId={l.ownerId} />
+            </div>
+          )}
+
+          {isStaff(me) && !isOwner && l.status !== 'removed' && (
+            <div className="flex items-center gap-2 rounded-xl border border-slate-200 p-3 text-sm text-slate-600">
+              <span className="flex-1">
+                管理團隊：這則刊登違反規則時可以直接下架{IS_REMOTE ? '，刊登者會收到 Email 和原因' : ''}。
+              </span>
+              <RemoveListingButton listing={l} className="btn btn-danger shrink-0 px-3 py-1.5 text-sm" />
             </div>
           )}
         </div>

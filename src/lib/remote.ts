@@ -10,7 +10,9 @@ import { createClient, type RealtimeChannel, type SupabaseClient } from '@supaba
 import { SUPABASE_KEY, SUPABASE_URL } from './backend';
 import { BASE_PATH } from './links';
 import { DEFAULT_SETTINGS } from './rules';
+import { activeSuspension, suspensionNote } from './staff';
 import type {
+  AdminLevel,
   AdminLog,
   DB,
   LatLng,
@@ -225,7 +227,7 @@ async function fetchSnapshot(): Promise<DB> {
   const uid = session?.user.id ?? null;
   const signedIn = (table: string, orderBy: string) => (uid ? selectAll(table, orderBy) : Promise.resolve([]));
 
-  const [settings, profiles, listings, reviews, secrets, blocks, orders, ledger, messages, reports, adminLog, reads, favs, searches] =
+  const [settings, profiles, listings, reviews, secrets, blocks, orders, ledger, messages, reports, adminLog, reads, favs, searches, susp] =
     await Promise.all([
       selectAll('settings', 'id'),
       selectAll('profiles', 'created_at'),
@@ -241,6 +243,7 @@ async function fetchSnapshot(): Promise<DB> {
       signedIn('chat_reads', 'order_id'),
       signedIn('favorites', 'created_at'),
       signedIn('saved_searches', 'created_at'),
+      signedIn('suspensions', 'created_at'),
     ]);
 
   const exact = new Map(secrets.map((r) => [str(r.listing_id), { lat: num(r.lat), lng: num(r.lng) }]));
@@ -257,6 +260,7 @@ async function fetchSnapshot(): Promise<DB> {
     name: str(r.name),
     bio: str(r.bio),
     role: r.role as User['role'],
+    adminLevel: (r.admin_level as User['adminLevel']) ?? null,
     merchant: Boolean(r.merchant),
     status: r.status as User['status'],
     loveScore: num(r.love_score),
@@ -314,6 +318,16 @@ async function fetchSnapshot(): Promise<DB> {
       lng: num(r.lng),
       createdAt: msReq(r.created_at),
     })),
+    suspensions: susp.map((r) => ({
+      id: str(r.id),
+      userId: str(r.user_id),
+      reason: str(r.reason),
+      until: ms(r.until),
+      createdBy: (r.created_by as string | null) ?? null,
+      createdAt: msReq(r.created_at),
+      liftedAt: ms(r.lifted_at),
+      liftedBy: (r.lifted_by as string | null) ?? null,
+    })),
     auth,
   };
 }
@@ -335,6 +349,7 @@ function emptySnapshot(error: string): DB {
     lastRead: {},
     favorites: [],
     savedSearches: [],
+    suspensions: [],
     auth: null,
     loadError: error,
   };
@@ -413,6 +428,7 @@ const REALTIME_TABLES = [
   'chat_reads',
   'favorites',
   'saved_searches',
+  'suspensions',
 ];
 
 let channel: RealtimeChannel | null = null;
@@ -604,14 +620,16 @@ export const remoteActions = {
   report: (targetType: 'listing' | 'user', targetId: string, reason: string) =>
     rpc<boolean>('report', { p_target_type: targetType, p_target_id: targetId, p_reason: reason }),
 
-  adminSetListingStatus: (listingId: string, status: 'active' | 'removed') =>
-    rpc<null>('admin_set_listing_status', { p_listing: listingId, p_status: status }),
+  adminSetListingStatus: (listingId: string, status: 'active' | 'removed', reason = '') =>
+    rpc<null>('admin_set_listing_status', { p_listing: listingId, p_status: status, p_reason: reason }),
   adminHandleReport: (reportId: string, action: 'dismiss' | 'remove_listing' | 'suspend_user') =>
     rpc<null>('admin_handle_report', { p_report: reportId, p_action: action }),
   adminResolveDispute: (orderId: string, outcome: 'complete' | 'refund', note: string) =>
     rpc<null>('admin_resolve_dispute', { p_order: orderId, p_outcome: outcome, p_note: note }),
-  adminSetUserStatus: (userId: string, status: 'active' | 'suspended') =>
-    rpc<null>('admin_set_user_status', { p_user: userId, p_status: status }),
+  adminSetUserStatus: (userId: string, status: 'active' | 'suspended', reason = '', days: number | null = null) =>
+    rpc<null>('admin_set_user_status', { p_user: userId, p_status: status, p_reason: reason, p_days: days }),
+  adminSetRole: (userId: string, level: AdminLevel | 'member') =>
+    rpc<null>('admin_set_role', { p_user: userId, p_level: level }),
   adminSetMerchant: (userId: string, merchant: boolean) =>
     rpc<null>('admin_set_merchant', { p_user: userId, p_merchant: merchant }),
   adminAdjustPoints: (userId: string, amount: number, note: string) =>
@@ -672,9 +690,11 @@ export const remoteAuth = {
     await refresh();
     const state = current?.auth ?? null;
     if (state?.state === 'suspended') {
+      // A suspended member can still read their own suspension, so say why and until when.
+      const note = suspensionNote(current ? activeSuspension(current) : null);
       await sb.auth.signOut();
       await refresh();
-      return fail('這個帳號已被停權，請聯絡客服。');
+      return fail(note);
     }
     return ok(state);
   },

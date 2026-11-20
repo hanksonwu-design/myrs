@@ -25,6 +25,7 @@ await db.exec(`
 await db.exec(migration('20261119000001_schema.sql'));
 await db.exec(migration('20261119000004_review_fixes.sql'));
 await db.exec(migration('20261119000006_improvements.sql'));
+await db.exec(migration('20261120000007_admin_levels.sql'));
 console.log('migrations applied');
 
 let failures = 0;
@@ -206,7 +207,7 @@ check((await err(ADM, `select admin_update_settings('{"freeDailyLimit": 2.5}')`)
 check((await err(ADM, `select admin_update_settings('{"hack": 1}')`))?.includes('沒有'), 'unknown setting refused');
 check((await as(ADM, `select * from admin_log`)).length >= 4, 'admin log written');
 check((await as(B, `select * from admin_log`)).length === 0, 'members cannot read admin log');
-await as(ADM, `select admin_set_user_status($1, 'suspended')`, [D]);
+await as(ADM, `select admin_set_user_status($1, 'suspended', '測試停權')`, [D]);
 check((await err(D, `select update_profile('x', '')`))?.includes('停權'), 'suspended user blocked');
 
 console.log('ledger visibility and anti-farming');
@@ -337,7 +338,7 @@ const freeOf = (title, quantity = 1) => ({ title, mode: 'free', pricePoints: 0, 
 const LG1 = await mk(G1, freeOf('小綠的麵包', 5));
 const LG1b = await mk(G1, freeOf('小綠的餅乾', 5));
 const OG1 = await req(G2, LG1);
-await as(ADM, `select admin_set_user_status($1, 'suspended')`, [G1]);
+await as(ADM, `select admin_set_user_status($1, 'suspended', '測試停權')`, [G1]);
 const sg1 = await ostat(OG1);
 check(sg1.status === 'cancelled' && sg1.cancel_reason.includes('無法使用'), 'suspending cancels unanswered requests');
 check((await as(G3, `select id from listings where id = $1`, [LG1b])).length === 0, "a suspended member's listings are hidden");
@@ -519,6 +520,112 @@ check((await err(G1, `select update_listing_location($1, 25.05, 121.55, ' ')`, [
 const om = await req(G2, LM);
 await as(G1, `select accept_order($1)`, [om]);
 check((await err(G1, `select update_listing_location($1, 25.06, 121.56, '別處')`, [LM]))?.includes('另約地點'), 'not after a deal was accepted');
+
+console.log('admin levels (migration 7)');
+const M1 = '00000000-0000-0000-0000-0000000002b1';
+const M2 = '00000000-0000-0000-0000-0000000002b2';
+const M3 = '00000000-0000-0000-0000-0000000002b3';
+await su(`insert into auth.users values ('${M1}', '886971111111', null), ('${M2}', '886972222222', null), ('${M3}', '886973333333', null)`);
+for (const [u, n] of [[M1, '審審'], [M2, '管管'], [M3, '小黑']]) await one(u, `select complete_signup($1) r`, [n]);
+const lvl = async (u) => (await su(`select role, admin_level, status from profiles where id = $1`, [u]))[0];
+check((await lvl(ADM)).admin_level === 'owner', 'existing admins become owners');
+check((await err(M2, `select admin_set_role($1, 'admin')`, [M2]))?.includes('擁有者'), 'members cannot appoint staff');
+await su(`delete from notifications`);
+await as(ADM, `select admin_set_role($1, 'moderator')`, [M1]);
+await as(ADM, `select admin_set_role($1, 'admin')`, [M2]);
+check((await lvl(M1)).role === 'admin' && (await lvl(M1)).admin_level === 'moderator', 'the owner appoints a moderator');
+check((await mail(M2)).some((x) => x.subject.includes('管理權限') && x.body.includes('管理員')), 'new staff are told by e-mail');
+check((await err(M2, `select admin_set_role($1, 'admin')`, [M1]))?.includes('擁有者'), 'admins cannot appoint staff');
+check((await err(ADM, `select admin_set_role($1, 'admin')`, [M2]))?.includes('已經是'), 'no-op change refused');
+const LDM = await mk(G3, freeOf('舊雨傘'));
+const ODM = await req(G2, LDM);
+await as(G3, `select accept_order($1)`, [ODM]);
+await su(`delete from notifications`);
+await as(G2, `select open_dispute($1, '沒有出現')`, [ODM]);
+check((await mail(M2)).some((x) => x.subject.includes('爭議')), 'admins are mailed about disputes');
+check((await mail(M1)).length === 0, 'moderators are not');
+
+const LQ = await mk(M3, { title: '自製果醬' });
+check((await lstat(LQ)) === 'pending_review', 'a flagged listing waits for review');
+check((await as(M1, `select id from listings where id = $1`, [LQ])).length === 1, 'moderators see pending listings');
+await as(M1, `select admin_set_listing_status($1, 'active')`, [LQ]);
+check((await lstat(LQ)) === 'active', 'moderators approve listings');
+check((await as(M1, `select * from ledger where user_id <> $1`, [M1])).length === 0, "moderators cannot read others' points");
+check((await as(M1, `select * from listing_secrets where listing_id = $1`, [LQ])).length === 0, 'or exact meeting spots');
+check((await as(M1, `select * from messages`)).length === 0, 'or chats');
+check((await as(M1, `select * from admin_log`)).length === 0, 'or the admin log');
+check((await as(M2, `select * from listing_secrets where listing_id = $1`, [LQ])).length === 1, 'admins still see exact spots');
+check((await err(M1, `select admin_set_user_status($1, 'suspended', 'x')`, [M3]))?.includes('管理員'), 'moderators cannot suspend');
+check((await err(M1, `select admin_resolve_dispute($1, 'refund', '')`, [O5]))?.includes('管理員'), 'or rule on disputes');
+check((await err(M1, `select admin_set_merchant($1, true)`, [M3]))?.includes('管理員'), 'or set merchants');
+check((await err(M2, `select admin_adjust_points($1, 5, 'x')`, [M3]))?.includes('擁有者'), 'only owners adjust points');
+check((await err(M2, `select admin_update_settings('{"minFee": 1}')`))?.includes('擁有者'), 'and change settings');
+
+for (const u of [G2, G3]) await as(u, `select report('listing', $1, '疑似轉賣')`, [LQ]);
+const rpm = (await as(M1, `select id from reports where target_id = $1 and status = 'open' limit 1`, [LQ]))[0]?.id;
+check(!!rpm, 'moderators see reports');
+const LSELF = await mk(M1, { title: '自製果醬禮盒' });
+check((await err(M1, `select admin_set_listing_status($1, 'active')`, [LSELF]))?.includes('自己的刊登'), 'staff cannot approve their own listing');
+await as(G2, `select report('listing', $1, '疑似轉賣')`, [LSELF]);
+const rself = (await as(M1, `select id from reports where target_id = $1 and status = 'open' limit 1`, [LSELF]))[0]?.id;
+check((await err(M1, `select admin_handle_report($1, 'dismiss')`, [rself]))?.includes('針對自己'), 'or handle reports against themselves');
+await as(ADM, `select admin_set_listing_status($1, 'active')`, [LSELF]);
+check((await lstat(LSELF)) === 'active', 'another staff member can');
+check((await err(M1, `select admin_handle_report($1, 'suspend_user')`, [rpm]))?.includes('管理員'), 'moderators cannot suspend through a report');
+await su(`delete from notifications`);
+await as(M1, `select admin_handle_report($1, 'remove_listing')`, [rpm]);
+check((await lstat(LQ)) === 'removed', 'moderators remove a reported listing');
+const mrm = await mail(M3);
+check(mrm.length === 1 && mrm[0].subject.includes('已被下架') && !mrm[0].body.includes('轉賣'), "the owner is told, without the reporter's words");
+
+const LR = await mk(M3, freeOf('普通的書'));
+const orr = await req(G2, LR);
+await su(`delete from notifications`);
+check((await err(B, `select admin_set_listing_status($1, 'removed', 'x')`, [LR]))?.includes('審核員'), 'members cannot remove listings');
+await as(M1, `select admin_set_listing_status($1, 'removed', '販售違禁品')`, [LR]);
+const orrS = await ostat(orr);
+check(orrS.status === 'cancelled' && orrS.cancel_reason.includes('販售違禁品'), 'removing any listing cancels its requests, with the reason');
+check((await mail(M3)).some((x) => x.subject.includes('已被下架') && x.body.includes('販售違禁品')), 'and tells the owner why');
+
+await su(`delete from notifications`);
+check((await err(M2, `select admin_set_user_status($1, 'suspended', ' ')`, [M3]))?.includes('原因'), 'a suspension needs a reason');
+check((await err(M2, `select admin_set_user_status($1, 'suspended', '洗點', 0)`, [M3]))?.includes('天數'), 'days are 1 to 365');
+check((await err(M2, `select admin_set_user_status($1, 'suspended', 'x')`, [M1]))?.includes('管理團隊'), 'staff cannot be suspended');
+await as(M2, `select admin_set_user_status($1, 'suspended', '多次爽約', 3)`, [M3]);
+const sm = await mail(M3);
+check(sm.length === 1 && sm[0].body.includes('多次爽約') && sm[0].body.includes('自動恢復'), 'the member is told why and until when');
+const smErr = await err(M3, `select update_profile('x', '')`);
+check(!!smErr?.includes('多次爽約') && smErr.includes('自動恢復'), 'and sees it when using the site');
+check((await as(M3, `select reason from suspensions`)).length === 1, 'the member reads their own suspension');
+check((await as(G2, `select * from suspensions`)).length === 0, 'other members cannot');
+check((await as(M1, `select * from suspensions`)).length === 0, 'moderators cannot either');
+check((await as(M2, `select * from suspensions where user_id = $1`, [M3])).length === 1, 'admins can');
+await su(`select private.run_maintenance()`);
+check((await lvl(M3)).status === 'suspended', 'still suspended before the period ends');
+await su(`update suspensions set until = now() - interval '1 minute' where user_id = $1`, [M3]);
+await su(`select private.run_maintenance()`);
+check((await lvl(M3)).status === 'active', 'restored when the period ends');
+check((await su(`select (lifted_at is not null and lifted_by is null) ok from suspensions where user_id = $1`, [M3]))[0].ok, 'recorded as lifted by the system');
+check((await mail(M3)).some((x) => x.subject.includes('已恢復')), 'and told by e-mail');
+await as(M2, `select admin_set_user_status($1, 'suspended', '詐騙')`, [M3]);
+check(!!(await err(M3, `select update_profile('x', '')`))?.includes('客服'), 'no end date: contact support');
+await su(`select private.run_maintenance()`);
+check((await lvl(M3)).status === 'suspended', 'no end date is never lifted by itself');
+await as(M2, `select admin_set_user_status($1, 'active')`, [M3]);
+check((await lvl(M3)).status === 'active' && (await su(`select count(*)::int n from suspensions where user_id = $1 and lifted_by = $2`, [M3, M2]))[0].n === 1, 'admins restore it');
+check((await err(M2, `select admin_set_user_status($1, 'active')`, [M3]))?.includes('沒有被停權'), 'cannot restore an active member');
+
+check((await err(ADM, `select admin_set_role($1, 'member')`, [ADM]))?.includes('至少要留一位擁有者'), 'the last owner cannot step down');
+check((await err(ADM, `select delete_account()`))?.includes('至少要留一位擁有者'), 'or delete the account');
+await as(ADM, `select admin_set_role($1, 'owner')`, [M2]);
+check((await err(ADM, `select admin_set_role($1, 'member')`, [M2]))?.includes('其他擁有者'), 'owners cannot demote other owners');
+await as(M2, `select admin_set_role($1, 'admin')`, [M2]);
+check((await lvl(M2)).admin_level === 'admin', 'an owner can step down while another owner remains');
+await as(ADM, `select admin_set_role($1, 'member')`, [M1]);
+check((await lvl(M1)).role === 'member' && (await lvl(M1)).admin_level === null, 'the owner removes a moderator');
+check((await as(M1, `select * from reports where reporter_id <> $1`, [M1])).length === 0, 'who loses the staff reads');
+check((await err(ADM, `select admin_set_role($1, 'admin')`, [D]))?.includes('停權'), 'suspended members cannot join the staff');
+check((await su(`select count(*)::int n from admin_log where action like '%改為%'`))[0].n === 5, 'every role change is logged');
 
 const sum = (await su(`select sum(amount)::int s from ledger where type in ('signup_bonus','reward','adjust')`))[0].s;
 const fees = (await su(`select -sum(amount)::int s from ledger where type = 'fee'`))[0].s;

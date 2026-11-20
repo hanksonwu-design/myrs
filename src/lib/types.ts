@@ -26,12 +26,17 @@ export interface LatLng {
   lng: number;
 }
 
+/** Staff levels, highest first. Only users with role 'admin' (the staff) have one. */
+export type AdminLevel = 'owner' | 'admin' | 'moderator';
+
 export interface User {
   id: string;
   phone: string;
   name: string;
   bio: string;
+  /** 'admin' means staff of any level; see adminLevel. */
   role: 'member' | 'admin';
+  adminLevel?: AdminLevel | null;
   merchant: boolean;
   status: 'active' | 'suspended' | 'deleted';
   loveScore: number;
@@ -175,6 +180,19 @@ export interface AdminLog {
   createdAt: number;
 }
 
+export interface Suspension {
+  id: string;
+  userId: string;
+  reason: string;
+  /** null: no end date. */
+  until: number | null;
+  createdBy: string | null;
+  createdAt: number;
+  liftedAt: number | null;
+  /** null with liftedAt set: the period ended on its own. */
+  liftedBy: string | null;
+}
+
 export interface DB {
   version: number;
   clockOffsetMs: number; // demo "fast forward"
@@ -191,6 +209,7 @@ export interface DB {
   lastRead: Record<string, number>; // `${userId}:${orderId}` -> time
   favorites: Favorite[];
   savedSearches: SavedSearch[];
+  suspensions: Suspension[];
   /** Supabase mode only: who is signed in, and whether they still need a profile. */
   auth?: { identity: string; state: 'needs_signup' | 'ok' | 'suspended' } | null;
   /** Supabase mode only: set when the first load failed (e.g. migrations not applied). */
