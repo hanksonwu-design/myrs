@@ -22,6 +22,7 @@ import type {
   Listing,
   MailStatus,
   Message,
+  Notice,
   Order,
   Report,
   Review,
@@ -269,6 +270,27 @@ async function selectOptional(table: string, orderBy: string): Promise<Row[]> {
   }
 }
 
+/** The member's latest 100 notifications (migration 12); none until it is applied. */
+async function selectNotices(uid: string | null): Promise<Notice[]> {
+  if (!uid) return [];
+  const { data, error } = await supabase()
+    .from('notifications')
+    .select('id, user_id, subject, body, link, created_at, read_at')
+    .eq('user_id', uid)
+    .order('created_at', { ascending: false })
+    .limit(100);
+  if (error) return [];
+  return ((data as Row[]) ?? []).map((r) => ({
+    id: str(r.id),
+    userId: str(r.user_id),
+    subject: str(r.subject),
+    body: str(r.body),
+    link: str(r.link),
+    createdAt: msReq(r.created_at),
+    readAt: ms(r.read_at),
+  }));
+}
+
 async function fetchSnapshot(): Promise<DB> {
   const sb = supabase();
   const {
@@ -281,7 +303,7 @@ async function fetchSnapshot(): Promise<DB> {
   const optionalSignedIn = (table: string, orderBy: string) =>
     uid ? selectOptional(table, orderBy) : Promise.resolve([] as Row[]);
 
-  const [settings, profiles, listings, reviews, secrets, blocks, orders, ledger, messages, reports, adminLog, reads, favs, searches, susp, wantRows, codeRows, inviteRows] =
+  const [settings, profiles, listings, reviews, secrets, blocks, orders, ledger, messages, reports, adminLog, reads, favs, searches, susp, wantRows, codeRows, inviteRows, notices] =
     await Promise.all([
       selectAll('settings', 'id'),
       selectAll('profiles', 'created_at'),
@@ -301,6 +323,7 @@ async function fetchSnapshot(): Promise<DB> {
       selectOptional('wants', 'created_at'),
       optionalSignedIn('invite_codes', 'user_id'),
       optionalSignedIn('invites', 'created_at'),
+      selectNotices(uid),
     ]);
   const codes = new Map(codeRows.map((r) => [str(r.user_id), str(r.code)]));
 
@@ -360,6 +383,7 @@ async function fetchSnapshot(): Promise<DB> {
     listings: listings.map((r) => toListing(r, exact)),
     wants: wantRows.map(toWant),
     invites: inviteRows.map(toInvite),
+    notifications: notices,
     orders: orders.map(toOrder),
     ledger: ledger.map(toLedger),
     messages: msgs,
@@ -403,6 +427,7 @@ function emptySnapshot(error: string): DB {
     listings: [],
     wants: [],
     invites: [],
+    notifications: [],
     orders: [],
     ledger: [],
     messages: [],
@@ -496,6 +521,7 @@ const REALTIME_TABLES = [
   'suspensions',
   'wants',
   'invites',
+  'notifications',
 ];
 
 let channel: RealtimeChannel | null = null;
@@ -725,6 +751,8 @@ export const remoteActions = {
       p_text: text,
       p_until: until === null ? null : new Date(until).toISOString(),
     }),
+  markNotificationsRead: (ids: string[] | null = null) => rpc<number>('mark_notifications_read', { p_ids: ids }),
+
   /** Counts only; visitors may call it too. Read only, so no refresh afterwards. */
   async communityImpact(): Promise<Result<CommunityImpact>> {
     const { data, error } = await supabase().rpc('community_impact');

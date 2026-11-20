@@ -987,7 +987,52 @@ check((await impact()).wantsFound === wf0 + 1, 'an answer completed with the mem
 check((await err(K1, `select private.add_ledger($1, 'adjust', 1, 'x')`, [K1]))?.includes('permission denied'), 'the private helpers stay closed after migration 11');
 check((await err(null, `select complete_signup('anon')`))?.includes('permission denied'), 'visitors still cannot call other functions');
 
-const sum =(await su(`select sum(amount)::int s from ledger where type in ('signup_bonus','reward','adjust')`))[0].s;
+console.log('in-app notifications (migration 12)');
+// Applied here, not at the top, so there are older notifications for it to find.
+const oldNotes = Number((await su(`select count(*) n from notifications`))[0].n);
+await db.exec(migration('20261120000012_inbox.sql'));
+check(
+  oldNotes > 0 && Number((await su(`select count(*) n from notifications where read_at is null`))[0].n) === 0,
+  `the ${oldNotes} notifications from before the bell start read`,
+);
+const Q1 = '00000000-0000-0000-0000-0000000006f1';
+const Q2 = '00000000-0000-0000-0000-0000000006f2';
+await su(`insert into auth.users values ('${Q1}', '886988800001', null), ('${Q2}', '886988800002', null)`);
+for (const [u, n] of [[Q1, '鈴鐺甲'], [Q2, '鈴鐺乙']]) await one(u, `select complete_signup($1)`, [n]);
+const QL = (await one(Q1, `select create_listing($1::jsonb) r`, [cloth('嬰兒推車')])).r.id;
+const QO = (await one(Q2, `select request_listing($1, '週末可以嗎', '') r`, [QL])).r;
+await as(Q1, `select accept_order($1)`, [QO]);
+const inbox = (u) => as(u, `select id, user_id, subject, link, read_at from notifications order by created_at`);
+const q1 = await inbox(Q1);
+const q2 = await inbox(Q2);
+check(
+  q1.length === 1 && q1[0].subject === '鈴鐺乙 想索取你的「嬰兒推車」' && q1[0].link === '/orders?tab=provide' && q1[0].read_at === null,
+  'a member sees a new request in the inbox, unread',
+);
+check(q2.length === 1 && q2[0].subject === '鈴鐺甲 接受了你的索取：「嬰兒推車」', 'and the other side sees the acceptance');
+check(
+  (await inbox(ADM)).every((n) => n.user_id === ADM) && (await inbox(K1)).every((n) => n.user_id === K1),
+  'members, staff included, see only their own notifications',
+);
+check((await err(null, `select * from notifications`))?.includes('permission denied'), 'visitors see none');
+check((await err(Q1, `update notifications set read_at = now() where user_id = $1`, [Q1]))?.includes('permission denied'), 'notifications cannot be written directly');
+check(
+  (await one(Q1, `select mark_notifications_read($1::uuid[]) r`, [[q2[0].id]])).r === 0 && (await inbox(Q2))[0].read_at === null,
+  "a member cannot mark someone else's as read",
+);
+await as(Q2, `select mark_done($1)`, [QO]);
+const q1b = await inbox(Q1);
+check(q1b.length === 2 && q1b.every((n) => n.read_at === null), 'a second notification arrives unread');
+check((await one(Q1, `select mark_notifications_read($1::uuid[]) r`, [[q1b[0].id]])).r === 1, 'one can be marked read');
+const q1c = await inbox(Q1);
+check(q1c[0].read_at !== null && q1c[1].read_at === null, 'and only that one');
+check((await one(Q1, `select mark_notifications_read() r`)).r === 1, 'or all at once');
+check((await one(Q1, `select mark_notifications_read() r`)).r === 0, 'marking again changes nothing');
+check((await err(null, `select mark_notifications_read()`))?.includes('permission denied'), 'visitors cannot mark anything');
+check((await impact()).total.clothing >= 1, 'visitors can still read the community counts after migration 12');
+check((await err(null, `select complete_signup('anon')`))?.includes('permission denied'), 'and still nothing else');
+
+const sum = (await su(`select sum(amount)::int s from ledger where type in ('signup_bonus','reward','adjust')`))[0].s;
 const fees = (await su(`select -sum(amount)::int s from ledger where type = 'fee'`))[0].s;
 const circ = (await su(`select sum(amount)::int s from ledger`))[0].s;
 const held = (await su(`select coalesce(sum(points),0)::int s from orders where mode='points' and status in ('requested','accepted','disputed')`))[0].s;

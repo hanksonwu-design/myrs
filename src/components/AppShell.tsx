@@ -3,8 +3,8 @@
 import { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ArrowLeftRight, Coins, MapPin, MessageCircle, Plus, Shield, User as UserIcon } from 'lucide-react';
-import { balanceOf, currentUser, pendingActions, unreadTotal, useDB } from '@/lib/store';
+import { ArrowLeftRight, Bell, Coins, MapPin, MessageCircle, Plus, Shield, User as UserIcon } from 'lucide-react';
+import { balanceOf, currentUser, pendingActions, unreadNotices, unreadTotal, useDB } from '@/lib/store';
 import { PILOT_NAME } from '@/lib/geo';
 import { Avatar, Loading } from './ui';
 import { IS_REMOTE } from '@/lib/backend';
@@ -48,6 +48,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [needsSignup, pathname, router]);
   const unread = d && user ? unreadTotal(d, user.id) : 0;
   const pending = d && user ? pendingActions(d, user.id) : 0;
+  const notices = d && user ? unreadNotices(d, user.id) : 0;
   const inChatRoom = /^\/messages\/.+/.test(pathname);
   const counts: Record<string, number> = { '/messages': unread, '/orders': pending };
 
@@ -104,6 +105,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     <Shield className="size-5" />
                   </Link>
                 )}
+                <Link
+                  href="/notifications"
+                  className={`rounded-full p-2 transition ${
+                    pathname.startsWith('/notifications') ? 'bg-brand-soft text-brand-dark' : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                  aria-label={notices ? `通知（${notices} 則未讀）` : '通知'}
+                  title="通知"
+                >
+                  <span className="relative block">
+                    <Bell className="size-5" />
+                    <CountBadge n={notices} />
+                  </span>
+                </Link>
                 <Link
                   href="/me/wallet"
                   className="flex items-center gap-1 rounded-full bg-amber-50 px-3 py-1.5 text-sm font-bold text-amber-700"

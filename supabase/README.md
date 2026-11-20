@@ -17,7 +17,7 @@
 
 ## 2. 建立資料表和規則
 
-到專案的 **SQL Editor**，依序貼上並執行這十一個檔案：
+到專案的 **SQL Editor**，依序貼上並執行這十二個檔案：
 
 1. `migrations/20261119000001_schema.sql`：資料表、權限（RLS）、所有點數與交易規則。
 2. `migrations/20261119000002_storage.sql`：照片儲存空間。刊登照片公開；聊天照片只有交易雙方看得到。
@@ -64,6 +64,11 @@
     - 只算已完成的交易，一筆交易算一件。月份用台灣時間。
     - 這個函式只回傳總數，沒有名字、刊登或地點，所以沒登入的訪客也能看。這是 public 裡唯一開放給訪客呼叫的函式；之後的 migration 如果重寫權限區塊，要記得再加一次 `grant execute on function public.community_impact() to anon;`。
     - 會員自己的成果（「我的」頁面）在網頁上用自己的交易計算，不需要另外開權限。
+12. `migrations/20261120000012_inbox.sql`：站內通知。
+    - 寄給會員的通知信，也會出現在網站頁首的鈴鐺裡，有未讀數字。打開「通知」頁就會標為已讀。
+    - 會員只看得到自己的通知；管理團隊在後台「通知信」一樣只看得到收件人和主旨。
+    - 套用前已經寄出的通知會先標為已讀，免得大家一打開就看到一堆舊通知。
+    - 網站開著時，新通知會即時出現。
 
 用 Supabase CLI 的話，也可以在 `web/` 執行 `supabase link` 再執行 `supabase db push`。
 
@@ -115,7 +120,7 @@ where id = (select id from auth.users where email = 'you@example.com');
 
 ## 6. 測試規則
 
-`npm run test:sql` 會在本機用 PGlite 跑一遍 schema，並檢查點數和權限規則，不需要連線到 Supabase。目前有 349 項檢查，例如：
+`npm run test:sql` 會在本機用 PGlite 跑一遍 schema，並檢查點數和權限規則，不需要連線到 Supabase。目前有 364 項檢查，例如：
 
 - 凍結與退點。
 - 手續費。
@@ -134,6 +139,7 @@ where id = (select id from auth.users where email = 'you@example.com');
 - 徵求的數量限制、回應、通知、檢舉與移除。
 - 邀請碼的使用條件、邀請獎勵、Email 別名不能重複領、關閉邀請獎勵。
 - 社區成果的件數、未完成和取消的交易不算、台灣時間的月份、徵求找到了、訪客只看得到總數。
+- 站內通知只有本人看得到、標為已讀、不能改別人的通知。
 - 點數守恆。
 
 ### 連線到真的 Supabase 測試

@@ -262,6 +262,21 @@ export interface MailStatus {
   items: MailItem[];
 }
 
+/**
+ * One notification: what Myrs e-mails a member, also shown under the bell
+ * (public.notifications, migration 12). Demo mode keeps its own.
+ */
+export interface Notice {
+  id: string;
+  userId: string;
+  subject: string;
+  body: string;
+  /** Path on the site, e.g. /orders?tab=provide; '' when there is nothing to open. */
+  link: string;
+  createdAt: number;
+  readAt: number | null;
+}
+
 /** Completed deals counted for the impact board (社區成果). One deal is one item. */
 export interface ImpactCounts {
   food: number;
@@ -305,6 +320,8 @@ export interface DB {
   listings: Listing[];
   wants: Want[];
   invites: Invite[];
+  /** Supabase mode: the signed-in member's latest 100. */
+  notifications: Notice[];
   orders: Order[];
   ledger: LedgerEntry[];
   messages: Message[];

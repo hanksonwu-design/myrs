@@ -1,6 +1,6 @@
 import { calcFee, DEFAULT_SETTINGS, DEFAULT_SITE, randomInviteCode } from './rules';
 import { DAY, HOUR, ymdLocal } from './format';
-import type { DB, LedgerEntry, Listing, Message, Order, Review, User, Want } from './types';
+import type { DB, LedgerEntry, Listing, Message, Notice, Order, Review, User, Want } from './types';
 
 export const DB_VERSION = 1;
 
@@ -453,6 +453,28 @@ export function createSeed(now: number): DB {
   ledger.push(entry('e_fo_huang', 'u_huang', 'reward', settings.firstOrderReward, '首次完成交易獎勵', now - 2 * DAY));
   ledger.push(entry('e_hold_lin', 'u_lin', 'hold', -15, '索取「當日麵包（獨立包裝）」', now - 3 * HOUR, 'o_bread'));
 
+  // What the server would have e-mailed for the open orders above (migration 4 wording).
+  const notifications: Notice[] = [
+    {
+      id: 'n_dress',
+      userId: 'u_lin',
+      subject: '陳先生 想索取你的「女童洋裝 120cm 兩件」',
+      body: `陳先生 送出了索取。\n留言：想給姪女穿，請問週六下午可以嗎？\n\n請在 ${settings.requestTimeoutHours} 小時內到 Myrs 接受或婉拒，逾時會自動取消。`,
+      link: '/orders?tab=provide',
+      createdAt: now - 2 * HOUR,
+      readAt: null,
+    },
+    {
+      id: 'n_bread',
+      userId: 'u_lin',
+      subject: '晨光烘焙 接受了你的索取：「當日麵包（獨立包裝）」',
+      body: '現在可以到聊天室約面交時間，精確地點也已經顯示。面交後，雙方都要到 Myrs 按「完成」。',
+      link: '/messages/view?id=o_bread',
+      createdAt: now - 2 * HOUR,
+      readAt: null,
+    },
+  ];
+
   return {
     version: DB_VERSION,
     clockOffsetMs: 0,
@@ -461,6 +483,7 @@ export function createSeed(now: number): DB {
     listings,
     wants: seedWants(now),
     invites: [],
+    notifications,
     orders,
     ledger,
     messages,

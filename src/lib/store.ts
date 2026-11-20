@@ -44,6 +44,7 @@ import type {
   Listing,
   MailStatus,
   Mode,
+  Notice,
   Order,
   OrderStatus,
   Report,
@@ -91,6 +92,7 @@ function load(): DB {
           suspensions: parsed.suspensions ?? [],
           wants: parsed.wants ?? seedWants(Date.now()),
           invites: parsed.invites ?? [],
+          notifications: parsed.notifications ?? [],
           settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
           site: { ...DEFAULT_SITE, ...parsed.site },
         };
@@ -180,6 +182,10 @@ export const userById = (d: DB, id: string | null) => d.users.find((u) => u.id =
 export const listingById = (d: DB, id: string) => d.listings.find((l) => l.id === id) ?? null;
 export const orderById = (d: DB, id: string) => d.orders.find((o) => o.id === id) ?? null;
 export const wantById = (d: DB, id: string) => d.wants.find((w) => w.id === id) ?? null;
+
+/** The bell's number. */
+export const unreadNotices = (d: DB, userId: string) =>
+  d.notifications.filter((n) => n.userId === userId && n.readAt === null).length;
 
 export function balanceOf(d: DB, userId: string): number {
   return d.ledger.filter((e) => e.userId === userId).reduce((s, e) => s + e.amount, 0);
@@ -335,6 +341,30 @@ function sysMsg(d: DB, orderId: string, body: string) {
   d.messages.push({ id: uid('m'), orderId, senderId: null, body, image: null, createdAt: nowOf(d) });
 }
 
+/** Same as private.notify: only active members get one. Supabase also e-mails it. */
+function notify(d: DB, userId: string, subject: string, body: string, link = '') {
+  if (userById(d, userId)?.status !== 'active') return;
+  const n: Notice = { id: uid('n'), userId, subject: subject.slice(0, 200), body, link, createdAt: nowOf(d), readAt: null };
+  d.notifications.push(n);
+}
+
+const chatLink = (o: Order) => `/messages/view?id=${o.id}`;
+const titleOf = (d: DB, o: Order) => listingById(d, o.listingId)?.title ?? '刊登';
+
+/** A listing answering a want went live: tell the member who wants it (private.on_listing_want). */
+function notifyWantAnswer(d: DB, l: Listing) {
+  const w = l.wantId ? wantById(d, l.wantId) : undefined;
+  if (!w || l.status !== 'active' || !wantOpen(w, nowOf(d))) return;
+  const price = l.mode === 'free' ? '免費' : l.mode === 'points' ? `${l.pricePoints} 點` : '以物易物';
+  notify(
+    d,
+    w.userId,
+    `有人回應你的徵求「${w.title}」`,
+    `${nameOf(d, l.ownerId)} 刊登了「${l.title}」（${price}，${l.areaLabel}）回應你的徵求。\n\n想要的話，到刊登頁按「索取」。已經找到了，記得到徵求頁按「已經找到了」。`,
+    `/listings/view?id=${l.id}`,
+  );
+}
+
 function grantReward(d: DB, userId: string, amount: number, note: string): number {
   const give = Math.min(amount, d.settings.monthlyRewardCap - rewardsThisMonth(d, userId));
   if (give > 0) addLedger(d, { userId, type: 'reward', amount: give, note });
@@ -357,13 +387,23 @@ function settleInvite(d: DB, userId: string, otherId: string) {
     }
   }
   i.rewardedAt = nowOf(d);
+  if (i.inviterPoints > 0) {
+    notify(
+      d,
+      i.inviterId,
+      `你邀請的 ${nameOf(d, userId)} 完成了第一筆交易`,
+      `謝謝你邀請鄰居加入 Myrs！你得到 ${i.inviterPoints} 點邀請獎勵，可以在「我的點數」查看。`,
+      '/me/wallet',
+    );
+  }
 }
 
 function nameOf(d: DB, id: string) {
   return userById(d, id)?.name ?? '使用者';
 }
 
-function cancelOrder(d: DB, o: Order, reason: string) {
+/** actor: the member whose action cancelled it; they are not notified. Null for time-based and staff changes. */
+function cancelOrder(d: DB, o: Order, reason: string, actor: string | null = null) {
   const restock = o.status === 'accepted' || o.status === 'disputed';
   o.status = 'cancelled';
   o.cancelledAt = nowOf(d);
@@ -384,9 +424,14 @@ function cancelOrder(d: DB, o: Order, reason: string) {
     if (l.status === 'reserved') l.status = 'active';
   }
   if (chatOpen(o)) sysMsg(d, o.id, `交易已取消：${reason}`);
+  for (const p of [o.requesterId, o.providerId]) {
+    if (p === actor) continue;
+    const refund = p === o.requesterId && o.mode === 'points' && o.points > 0 ? `\n凍結的 ${o.points} 點已退回你的錢包。` : '';
+    notify(d, p, `「${titleOf(d, o)}」的交易已取消`, `原因：${reason}${refund}`, '/orders');
+  }
 }
 
-function completeOrder(d: DB, o: Order, message: string) {
+function completeOrder(d: DB, o: Order, message: string, actor: string | null = null) {
   const t = nowOf(d);
   const l = listingById(d, o.listingId);
   o.status = 'completed';
@@ -419,6 +464,12 @@ function completeOrder(d: DB, o: Order, message: string) {
     l.status = 'closed';
   }
   sysMsg(d, o.id, message);
+  for (const p of [o.requesterId, o.providerId]) {
+    if (p === actor) continue;
+    const points =
+      o.mode !== 'points' ? '' : p === o.requesterId ? `${o.points} 點已轉給對方。\n` : `你收到 ${o.points - o.fee} 點（扣除手續費 ${o.fee} 點）。\n`;
+    notify(d, p, `「${l?.title ?? '刊登'}」交易完成`, `${points}歡迎在 ${d.settings.reviewWindowDays} 天內到 Myrs 給對方評價。`, chatLink(o));
+  }
 
   // Anti-farming flag: the same pair trading points repeatedly within 7 days.
   if (o.mode === 'points') {
@@ -717,7 +768,7 @@ const localActions = {
       if (lastOwner(d, u)) return fail('至少要留一位擁有者，請先指派另一位擁有者');
       for (const o of d.orders) {
         if (isParty(o, u.id) && OPEN_STATUSES.includes(o.status)) {
-          cancelOrder(d, o, '對方已刪除帳號');
+          cancelOrder(d, o, '對方已刪除帳號', u.id);
         }
       }
       for (const l of d.listings) {
@@ -746,7 +797,7 @@ const localActions = {
         for (const o of d.orders) {
           const between = (o.requesterId === u.id && o.providerId === otherId) || (o.requesterId === otherId && o.providerId === u.id);
           const notStarted = o.status === 'requested' || (o.status === 'accepted' && !o.requesterDoneAt && !o.providerDoneAt);
-          if (between && notStarted) cancelOrder(d, o, '其中一方無法繼續這筆交易，系統已自動取消');
+          if (between && notStarted) cancelOrder(d, o, '其中一方無法繼續這筆交易，系統已自動取消', u.id);
         }
       }
       return ok(!blocked);
@@ -800,7 +851,7 @@ const localActions = {
         return fail('還有進行中的交易，請先完成或取消再下架');
       }
       for (const o of d.orders) {
-        if (o.listingId === l.id && o.status === 'requested') cancelOrder(d, o, '提供者已下架這則刊登');
+        if (o.listingId === l.id && o.status === 'requested') cancelOrder(d, o, '提供者已下架這則刊登', u.id);
       }
       l.status = 'closed';
       return ok(null);
@@ -947,6 +998,7 @@ const localActions = {
         return fail(`同一則徵求最多回應 ${WANT_MAX_ANSWERS} 次`);
       }
       l.wantId = w.id;
+      notifyWantAnswer(d, l);
       return ok(null);
     });
   },
@@ -1018,6 +1070,14 @@ const localActions = {
       if (o.mode === 'points') {
         addLedger(d, { userId: u.id, orderId: o.id, type: 'hold', amount: -o.points, note: `索取「${l.title}」` });
       }
+      const offer = o.mode === 'points' ? `，會付 ${o.points} 點` : o.mode === 'swap' ? `，想用「${o.swapOffer}」交換` : '';
+      notify(
+        d,
+        l.ownerId,
+        `${u.name} 想索取你的「${l.title}」`,
+        `${u.name} 送出了索取${offer}。${o.note ? `\n留言：${o.note}` : ''}\n\n請在 ${s.requestTimeoutHours} 小時內到 Myrs 接受或婉拒，逾時會自動取消。`,
+        '/orders?tab=provide',
+      );
       return ok(o.id);
     });
   },
@@ -1040,11 +1100,18 @@ const localActions = {
         d.messages.push({ id: uid('m'), orderId: o.id, senderId: o.requesterId, body: o.note, image: null, createdAt: o.createdAt });
       }
       sysMsg(d, o.id, `${u.name} 接受了索取，現在可以聊天約面交，精確地點已顯示在上方。`);
+      notify(
+        d,
+        o.requesterId,
+        `${u.name} 接受了你的索取：「${l.title}」`,
+        '現在可以到聊天室約面交時間，精確地點也已經顯示。面交後，雙方都要到 Myrs 按「完成」。',
+        chatLink(o),
+      );
       if (l.remaining === 0) {
         l.status = 'reserved';
         for (const other of d.orders) {
           if (other.listingId === l.id && other.id !== o.id && other.status === 'requested') {
-            cancelOrder(d, other, '物品已被其他人預約');
+            cancelOrder(d, other, '物品已被其他人預約', u.id);
           }
         }
       }
@@ -1059,7 +1126,7 @@ const localActions = {
       const o = orderById(d, orderId);
       if (!o || o.providerId !== u.id) return fail('找不到這筆索取');
       if (o.status !== 'requested') return fail('這筆索取已經處理過了');
-      cancelOrder(d, o, reason.trim() ? `提供者婉拒：${reason.trim()}` : '提供者婉拒');
+      cancelOrder(d, o, reason.trim() ? `提供者婉拒：${reason.trim()}` : '提供者婉拒', u.id);
       return ok(null);
     });
   },
@@ -1072,13 +1139,13 @@ const localActions = {
       if (!o || !isParty(o, u.id)) return fail('找不到這筆交易');
       if (o.status === 'requested') {
         if (o.requesterId !== u.id) return fail('提供者請用「婉拒」');
-        cancelOrder(d, o, '索取者撤回');
+        cancelOrder(d, o, '索取者撤回', u.id);
         return ok(null);
       }
       if (o.status !== 'accepted') return fail('這筆交易現在不能取消');
       if (o.requesterDoneAt || o.providerDoneAt) return fail('已有一方確認完成，若有問題請提出爭議');
       if (!reason.trim()) return fail('請說明取消原因');
-      cancelOrder(d, o, `${u.name} 取消：${reason.trim()}`);
+      cancelOrder(d, o, `${u.name} 取消：${reason.trim()}`, u.id);
       return ok(null);
     });
   },
@@ -1094,10 +1161,28 @@ const localActions = {
       if (o.requesterId === u.id) o.requesterDoneAt = o.requesterDoneAt ?? t;
       else o.providerDoneAt = o.providerDoneAt ?? t;
       if (o.requesterDoneAt && o.providerDoneAt) {
-        completeOrder(d, o, '雙方都已確認完成，交易完成。');
+        completeOrder(d, o, '雙方都已確認完成，交易完成。', u.id);
         return ok(true);
       }
       sysMsg(d, o.id, `${u.name} 已確認完成，等待對方確認；${d.settings.autoCompleteHours} 小時內沒有回應會自動完成。`);
+      const h = d.settings.autoCompleteHours;
+      if (o.requesterId === u.id) {
+        notify(
+          d,
+          o.providerId,
+          `${u.name} 已確認「${titleOf(d, o)}」交易完成`,
+          `已經交付的話，請到 Myrs 按「完成」。\n如果有問題，請在 ${h} 小時內到聊天室按「提出爭議」；沒有回應的話，交易會自動完成。`,
+          chatLink(o),
+        );
+      } else {
+        notify(
+          d,
+          o.requesterId,
+          `${u.name} 已確認「${titleOf(d, o)}」交易完成`,
+          `已經拿到東西的話，請到 Myrs 按「完成」。\n如果還沒拿到或有問題，請在 ${h} 小時內到聊天室按「提出爭議」；沒有回應的話，交易會自動完成${o.mode === 'points' ? `，凍結的 ${o.points} 點會轉給對方` : ''}。`,
+          chatLink(o),
+        );
+      }
       return ok(false);
     });
   },
@@ -1114,6 +1199,20 @@ const localActions = {
       o.disputeBy = u.id;
       o.disputeReason = reason.trim();
       sysMsg(d, o.id, `${u.name} 提出爭議：「${reason.trim()}」。管理員會介入處理，點數暫時維持凍結。`);
+      const t = titleOf(d, o);
+      notify(
+        d,
+        o.requesterId === u.id ? o.providerId : o.requesterId,
+        `「${t}」的交易有人提出爭議`,
+        `爭議說明：${o.disputeReason}\n管理員會介入處理，點數暫時維持凍結。`,
+        chatLink(o),
+      );
+      // Disputes are for admins and owners; moderators do not handle them.
+      for (const a of d.users) {
+        if (a.role === 'admin' && (a.adminLevel === 'owner' || a.adminLevel === 'admin')) {
+          notify(d, a.id, '有新的交易爭議待處理', `「${t}」：${o.disputeReason}`, '/admin');
+        }
+      }
       return ok(null);
     });
   },
@@ -1230,6 +1329,7 @@ const localActions = {
           }
         }
         logAdmin(d, a, `核准刊登「${l.title}」`);
+        notifyWantAnswer(d, l);
         return ok(null);
       }
       if (l.status === 'removed') return fail('這則刊登已經下架了');
@@ -1484,6 +1584,22 @@ const localActions = {
       d.site = { ...d.site, announcement: v, announcementUntil: until, announcementAt: t };
       logAdmin(d, a, `發布全站公告：${v}（${until === null ? '沒有結束時間' : `到 ${formatUntil(until)}`}）`);
       return ok(null);
+    });
+  },
+
+  /** Marks the given notifications read, or all of them; returns how many changed. */
+  markNotificationsRead(ids: string[] | null = null): Result<number> {
+    return mutate((d) => {
+      const u = requireUser(d);
+      if ('error' in u) return fail(u.error);
+      let n = 0;
+      for (const x of d.notifications) {
+        if (x.userId === u.id && x.readAt === null && (ids === null || ids.includes(x.id))) {
+          x.readAt = nowOf(d);
+          n++;
+        }
+      }
+      return ok(n);
     });
   },
 
