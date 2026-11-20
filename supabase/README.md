@@ -97,6 +97,40 @@ anon / publishable key 本來就會放在網頁裡，可以公開。**service_ro
   - 接好後到 **Rate Limits** 調高每小時可寄的信件數（試點設 100）。
 - 驗證碼長度看 **Providers → Email → Email OTP length**（目前 8 位數）。登入頁收 6～8 位數都可以。
 
+**Google 帳戶登入**
+
+A. 在 Google Cloud Console（console.cloud.google.com）
+
+1. 建一個專案（例如 `Myrs`），進到 **Google Auth Platform**。
+2. **品牌（Branding）**：
+   - 應用程式名稱填 `Myrs 你的我的共享平台`，支援信箱填你自己的。
+   - 首頁填 `https://hanksonwu-design.github.io/myrs/`，隱私權政策填 `…/myrs/privacy`，服務條款填 `…/myrs/terms`。
+   - 授權網域加 `hanksonwu-design.github.io` 和 `mpswtcvwxuhtmwmbwocu.supabase.co`。
+   - 先不要上傳標誌：上傳後要等 Google 審核。
+3. **目標對象（Audience）**：使用者類型選「外部」，再按「發布應用程式」改成「正式版」。停在「測試」的話，只有名單上的人能登入。
+4. **資料存取（Data Access）**：只要 `openid`、`.../auth/userinfo.email`、`.../auth/userinfo.profile` 三個基本範圍。只用這三個，不需要送審。
+5. **用戶端（Clients）→ 建立用戶端**：
+   - 類型選「網頁應用程式」。
+   - 已授權的 JavaScript 來源：`https://hanksonwu-design.github.io` 和 `http://localhost:3000`。
+   - 已授權的重新導向 URI：`https://mpswtcvwxuhtmwmbwocu.supabase.co/auth/v1/callback`。
+6. 建立後馬上記下「用戶端 ID」和「用戶端密碼」。密碼可能只顯示這一次。**密碼不要放進 Git、網站或聊天。**
+
+B. 在 Supabase
+
+1. 到 **Authentication → Sign In / Providers → Google**，打開 **Enable Sign in with Google**。
+2. 貼上 **Client IDs** 和 **Client Secret**，按 **Save**。
+
+C. 打開網站上的按鈕
+
+- 本機：`.env.local` 改成 `NEXT_PUBLIC_LOGIN_METHODS=google,email`。
+- 正式網站：`.github/workflows/deploy.yml` 的 `NEXT_PUBLIC_LOGIN_METHODS` 改成 `google,email`，推送後重新部署。
+
+注意事項
+
+- Google 的選帳戶畫面可能顯示 `mpswtcvwxuhtmwmbwocu.supabase.co`，這是正常的；要換成自己的網址，需要 Supabase 的付費自訂網域。
+- LINE、Facebook、Instagram 的內建瀏覽器不能用 Google 登入。登入頁會請使用者改用手機瀏覽器，或用 Email。
+- 同一個 Gmail 用 Email 驗證碼註冊過，再用 Google 登入，會進到同一個帳號（Supabase 會自動連結）。
+
 **手機簡訊登入（文件規劃的正式方式）**
 
 1. 到 **Providers → Phone** 啟用，選簡訊商（Twilio、Vonage、MessageBird 等）並填入帳號。
