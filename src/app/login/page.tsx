@@ -12,6 +12,7 @@ import { RemoteLogin } from '@/components/RemoteLogin';
 import { IS_REMOTE } from '@/lib/backend';
 import { pendingInvite } from '@/lib/invite';
 import { InviteCodeField, applyInviteAfterSignup } from '@/components/InviteCard';
+import { ConsentNote } from '@/components/Legal';
 
 function LoginInner() {
   const d = useDB()!;
@@ -164,9 +165,7 @@ function LoginInner() {
           </form>
         )}
 
-        <p className="mt-5 text-xs leading-relaxed text-slate-400">
-          註冊即表示同意使用條款與隱私權政策。點數只能在 Myrs 內使用，不能兌換現金或轉帳給他人。
-        </p>
+        <ConsentNote />
       </section>
 
       <section className="card p-6">

@@ -13,6 +13,7 @@ import type { DB } from '@/lib/types';
 import { useToast } from './Providers';
 import { pendingInvite } from '@/lib/invite';
 import { InviteCodeField, applyInviteAfterSignup } from './InviteCard';
+import { ConsentNote } from './Legal';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const RESEND_SECONDS = 60;
@@ -245,9 +246,7 @@ export function RemoteLogin({ d, next }: { d: DB; next: string }) {
           </div>
         </div>
         {body}
-        <p className="mt-5 text-xs leading-relaxed text-slate-400">
-          註冊即表示同意使用條款與隱私權政策。點數只能在 Myrs 內使用，不能兌換現金或轉帳給他人。
-        </p>
+        <ConsentNote />
       </section>
 
       <section className="card p-6 text-sm text-slate-600">

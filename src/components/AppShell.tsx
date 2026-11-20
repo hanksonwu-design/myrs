@@ -166,6 +166,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ·{' '}
         <Link href="/about" className="underline hover:text-brand">
           關於與規則
+        </Link>{' '}
+        ·{' '}
+        <Link href="/terms" className="underline hover:text-brand">
+          使用條款
+        </Link>{' '}
+        ·{' '}
+        <Link href="/privacy" className="underline hover:text-brand">
+          隱私權政策
         </Link>
         <br />
         {IS_REMOTE ? '試點版：資料存放在 Myrs 資料庫。' : '示範版：所有資料只存在這個瀏覽器，不會上傳。'}

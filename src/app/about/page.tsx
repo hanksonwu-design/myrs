@@ -89,15 +89,23 @@ export default function AboutPage() {
         <h2 className="mb-2 font-bold text-slate-800">服務條款與隱私權</h2>
         {IS_REMOTE ? (
           <p>
-            正式條款會在上線前由法務審閱後公布。帳號、刊登、交易和聊天紀錄存放在 Myrs 的資料庫；手機號碼和 Email
-            只用來登入，不會顯示給其他使用者。面交的精確地點只有提供者接受索取後，雙方才看得到。
+            帳號、刊登、交易和聊天紀錄存放在 Myrs 的資料庫；Email 只用來登入和寄通知，不會顯示給其他使用者。面交的精確地點只有提供者接受索取後，雙方才看得到。
           </p>
         ) : (
           <p>
-            正式條款會在上線前由法務審閱後公布。這個網頁是示範版：所有資料只存在你這台裝置的瀏覽器裡，不會上傳到任何伺服器；清除瀏覽器資料或在「我的
-            → 示範工具」重設，就會全部清空。
+            這個網頁是示範版：所有資料只存在你這台裝置的瀏覽器裡，不會上傳到任何伺服器；清除瀏覽器資料或在「我的 →
+            示範工具」重設，就會全部清空。
           </p>
         )}
+        <p className="mt-2">目前的條款是草稿，正式上線前會請律師審閱後更新。</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Link href="/terms" className="btn btn-outline px-3 py-1.5 text-sm">
+            使用條款
+          </Link>
+          <Link href="/privacy" className="btn btn-outline px-3 py-1.5 text-sm">
+            隱私權政策
+          </Link>
+        </div>
       </section>
 
       <div className="flex flex-wrap justify-center gap-2">
