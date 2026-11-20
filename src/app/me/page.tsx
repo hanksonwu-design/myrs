@@ -26,6 +26,7 @@ import { useMyPosition, useRequireLogin } from '@/components/hooks';
 import { TrustBadge } from '@/components/TrustBadge';
 import { InviteCard } from '@/components/InviteCard';
 import { MyImpact } from '@/components/Impact';
+import { InstallCard } from '@/components/Install';
 import { useToast } from '@/components/Providers';
 import { IS_REMOTE } from '@/lib/backend';
 import { listingPath, wantPath } from '@/lib/links';
@@ -131,6 +132,8 @@ export default function MePage() {
       <MyImpact d={d} user={user} />
 
       <InviteCard d={d} user={user} />
+
+      <InstallCard />
 
       <section className="card p-5">
         <div className="mb-3 flex items-center justify-between">

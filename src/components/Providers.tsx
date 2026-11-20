@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { CircleCheck, CircleX, Info } from 'lucide-react';
 import { actions } from '@/lib/store';
 import { rememberInvite } from '@/lib/invite';
+import { startInstall } from '@/lib/install';
 
 type ToastKind = 'success' | 'error' | 'info';
 interface Toast {
@@ -30,6 +31,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   // A shared link's invite code, kept until the visitor signs up.
   useEffect(() => rememberInvite(), []);
+  useEffect(() => startInstall(), []);
 
   // Time-based rules (request timeout, auto-complete, food expiry).
   useEffect(() => {

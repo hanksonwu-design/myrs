@@ -13,6 +13,7 @@ import { ListingCard } from '@/components/ListingVisuals';
 import { WANT_COLOR, WantCard } from '@/components/WantVisuals';
 import { Announcement } from '@/components/Announcement';
 import { ImpactStrip } from '@/components/Impact';
+import { InstallBanner } from '@/components/Install';
 import { MapView } from '@/components/map/MapView';
 import { Empty } from '@/components/ui';
 import { useMyPosition } from '@/components/hooks';
@@ -152,6 +153,7 @@ export default function NearbyPage() {
           </div>
         </section>
       )}
+      {user && <InstallBanner />}
       <ImpactStrip d={d} />
 
       {/* Filters */}

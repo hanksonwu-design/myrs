@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#00A078" />
+    <title>沒有網路 · Myrs</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #f6f8f7;
+        color: #1e293b;
+        font-family: system-ui, -apple-system, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+      }
+      main {
+        max-width: 22rem;
+        margin: 1.5rem;
+        padding: 2rem 1.5rem;
+        border-radius: 1.5rem;
+        background: #fff;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+        text-align: center;
+      }
+      .brand {
+        font-size: 1.75rem;
+        font-weight: 800;
+        color: #00a078;
+        letter-spacing: 0.02em;
+      }
+      h1 {
+        margin: 1rem 0 0.5rem;
+        font-size: 1.25rem;
+      }
+      p {
+        margin: 0;
+        color: #475569;
+        line-height: 1.6;
+      }
+      button {
+        margin-top: 1.25rem;
+        padding: 0.7rem 1.5rem;
+        border: 0;
+        border-radius: 0.9rem;
+        background: #00a078;
+        color: #fff;
+        font-size: 1rem;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brand">Myrs</div>
+      <h1>目前沒有網路</h1>
+      <p>Myrs 要連上網路才能看到附近的分享和你的交易。連上之後，按下面的按鈕再試一次。</p>
+      <button type="button" onclick="location.reload()">重新整理</button>
+    </main>
+  </body>
+</html>

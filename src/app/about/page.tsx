@@ -43,6 +43,9 @@ export default function AboutPage() {
             </li>
           ))}
         </ol>
+        <p className="mt-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
+          小提醒：可以把 Myrs 加到手機主畫面，之後像 App 一樣一點就打開。做法在「我的」頁的「把 Myrs 加到主畫面」。
+        </p>
       </section>
 
       <section className="card p-5">
