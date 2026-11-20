@@ -73,7 +73,7 @@ export function BlockButton({ userId }: { userId: string }) {
     <button
       className="btn btn-ghost px-2 text-slate-500"
       onClick={async () => {
-        if (!blocked && !confirm('封鎖後，你們彼此看不到刊登，也不能索取或聊天。確定封鎖？')) return;
+        if (!blocked && !confirm('封鎖後，你們彼此看不到刊登，也不能索取或聊天；你們之間還沒開始的交易會自動取消。確定封鎖？')) return;
         const r = await actions.toggleBlock(userId);
         if (!r.ok) return toast(r.error, 'error');
         toast(r.value ? '已封鎖' : '已解除封鎖');

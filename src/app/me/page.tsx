@@ -3,22 +3,25 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ChevronRight, Coins, FastForward, Heart, LogOut, Pencil, RotateCcw, Shield, Store, Trash2, Users } from 'lucide-react';
+import { Bell, ChevronRight, Coins, FastForward, Heart, LogOut, Pencil, RotateCcw, Shield, Store, Trash2, Users, X } from 'lucide-react';
 import {
   actions,
   balanceOf,
   heldOf,
+  listingById,
   nowOf,
   ratingOf,
   reviewPublished,
   useDB,
   userById,
 } from '@/lib/store';
-import { LISTING_STATUS_LABEL } from '@/lib/rules';
+import { LISTING_STATUS_LABEL, RADIUS_OPTIONS } from '@/lib/rules';
+import type { Category } from '@/lib/types';
 import { formatDate, maskPhone, timeAgo } from '@/lib/format';
 import { ListingThumb } from '@/components/ListingVisuals';
 import { Avatar, Loading, Modal, ModeBadge, Stars } from '@/components/ui';
-import { useRequireLogin } from '@/components/hooks';
+import { useMyPosition, useRequireLogin } from '@/components/hooks';
+import { TrustBadge } from '@/components/TrustBadge';
 import { useToast } from '@/components/Providers';
 import { IS_REMOTE } from '@/lib/backend';
 import { listingPath } from '@/lib/links';
@@ -33,6 +36,11 @@ export default function MePage() {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState('');
   const [bio, setBio] = useState('');
+  const pos = useMyPosition();
+  const [kw, setKw] = useState('');
+  const [kwCat, setKwCat] = useState<Category | ''>('');
+  const [kwRadius, setKwRadius] = useState(3);
+  const [kwBusy, setKwBusy] = useState(false);
   if (!user) return <Loading />;
 
   const now = nowOf(d);
@@ -41,6 +49,23 @@ export default function MePage() {
   const reviews = d.reviews.filter((r) => r.revieweeId === user.id && reviewPublished(d, r));
   const blocked = user.blocked.map((id) => userById(d, id)).filter(Boolean);
   const others = d.users.filter((u) => u.status === 'active' && u.id !== user.id);
+  const favorites = d.favorites.filter((f) => f.userId === user.id).sort((a, b) => b.createdAt - a.createdAt);
+  const searches = d.savedSearches.filter((s) => s.userId === user.id).sort((a, b) => a.createdAt - b.createdAt);
+
+  const addSearch = async () => {
+    setKwBusy(true);
+    const r = await actions.saveSearch({
+      keyword: kw,
+      category: kwCat || null,
+      radiusKm: kwRadius,
+      lat: pos.point.lat,
+      lng: pos.point.lng,
+    });
+    setKwBusy(false);
+    if (!r.ok) return toast(r.error, 'error');
+    setKw('');
+    toast(`已訂閱「${kw.trim()}」`);
+  };
 
   return (
     <div className="mx-auto max-w-2xl space-y-4">
@@ -55,6 +80,9 @@ export default function MePage() {
             </h1>
             <p className="text-sm text-slate-500">
               {maskPhone(user.phone)} · {formatDate(user.createdAt)} 加入
+            </p>
+            <p className="mt-1">
+              <TrustBadge d={d} userId={user.id} deals />
             </p>
             {user.bio && <p className="mt-1 text-sm text-slate-600">{user.bio}</p>}
           </div>
@@ -120,6 +148,126 @@ export default function MePage() {
             ))}
           </ul>
         )}
+      </section>
+
+      <section className="card p-5">
+        <h2 className="mb-3 flex items-center gap-1.5 font-bold">
+          <Heart className="size-4 text-m-rose" />
+          我的收藏
+        </h2>
+        {favorites.length === 0 ? (
+          <p className="text-sm text-slate-500">在刊登頁按右上角的愛心，就會收藏在這裡。</p>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {favorites.map((f) => {
+              const l = listingById(d, f.listingId);
+              return (
+                <li key={f.listingId} className="flex items-center gap-3 py-2.5">
+                  {l ? (
+                    <Link href={listingPath(l.id)} className="flex min-w-0 flex-1 items-center gap-3">
+                      <ListingThumb listing={l} className="size-12 shrink-0 rounded-lg" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold">{l.title}</p>
+                        <p className="text-xs text-slate-500">
+                          {LISTING_STATUS_LABEL[l.status]} · {l.areaLabel}
+                        </p>
+                      </div>
+                      <ModeBadge listing={l} />
+                    </Link>
+                  ) : (
+                    <p className="flex-1 text-sm text-slate-500">這則刊登已經看不到了</p>
+                  )}
+                  <button
+                    className="btn btn-ghost px-2 text-slate-400"
+                    aria-label="取消收藏"
+                    title="取消收藏"
+                    onClick={async () => {
+                      const r = await actions.toggleFavorite(f.listingId);
+                      if (!r.ok) toast(r.error, 'error');
+                    }}
+                  >
+                    <X className="size-4" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      <section className="card p-5">
+        <h2 className="mb-1 flex items-center gap-1.5 font-bold">
+          <Bell className="size-4 text-brand" />
+          關鍵字通知
+        </h2>
+        <p className="mb-3 text-sm text-slate-500">
+          附近出現符合關鍵字的新刊登時，寄 Email 通知你（每天最多 10 封）。範圍以
+          {pos.source === 'gps' ? '你目前的位置' : '試點中心（大安森林公園）'}為中心，最多 5 個關鍵字。
+          {!IS_REMOTE && '（示範模式不會真的寄信）'}
+        </p>
+        {searches.length > 0 && (
+          <ul className="mb-3 flex flex-wrap gap-2">
+            {searches.map((s) => (
+              <li key={s.id} className="flex items-center gap-1 rounded-full bg-brand-soft py-1 pl-3 pr-1 text-sm text-brand-dark">
+                <span className="font-semibold">{s.keyword}</span>
+                <span className="text-xs">
+                  {s.category ? `・${s.category === 'food' ? '食物' : '衣物'}` : ''}・{s.radiusKm} 公里內
+                </span>
+                <button
+                  className="rounded-full p-1 hover:bg-white/60"
+                  aria-label={`刪除「${s.keyword}」`}
+                  onClick={async () => {
+                    const r = await actions.deleteSavedSearch(s.id);
+                    toast(r.ok ? `已刪除「${s.keyword}」` : r.error, r.ok ? 'info' : 'error');
+                  }}
+                >
+                  <X className="size-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <form
+          className="flex flex-wrap gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void addSearch();
+          }}
+        >
+          <input
+            className="input min-w-0 flex-1 basis-40"
+            placeholder="例如：吐司、童裝、外套"
+            maxLength={20}
+            value={kw}
+            onChange={(e) => setKw(e.target.value)}
+            aria-label="關鍵字"
+          />
+          <select
+            className="rounded-xl border border-slate-300 bg-white px-2 text-sm"
+            value={kwCat}
+            onChange={(e) => setKwCat(e.target.value as Category | '')}
+            aria-label="分類"
+          >
+            <option value="">全部分類</option>
+            <option value="food">食物</option>
+            <option value="clothing">衣物</option>
+          </select>
+          <select
+            className="rounded-xl border border-slate-300 bg-white px-2 text-sm"
+            value={kwRadius}
+            onChange={(e) => setKwRadius(Number(e.target.value))}
+            aria-label="範圍"
+          >
+            {RADIUS_OPTIONS.map((r) => (
+              <option key={r} value={r}>
+                {r} 公里內
+              </option>
+            ))}
+          </select>
+          <button type="submit" className="btn btn-primary" disabled={kwBusy || !kw.trim() || searches.length >= 5}>
+            訂閱
+          </button>
+        </form>
       </section>
 
       <section className="card p-5">

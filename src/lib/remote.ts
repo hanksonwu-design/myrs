@@ -20,10 +20,11 @@ import type {
   Order,
   Report,
   Review,
+  SavedSearch,
   Settings,
   User,
 } from './types';
-import type { NewListingInput, Result } from './store';
+import type { NewListingInput, Result, SavedSearchInput } from './store';
 
 const ok = <T,>(value: T): Result<T> => ({ ok: true, value });
 const fail = (error: string): { ok: false; error: string } => ({ ok: false, error });
@@ -128,6 +129,7 @@ function toOrder(r: Row): Order {
     disputeReason: str(r.dispute_reason),
     disputeBy: (r.dispute_by as string | null) ?? null,
     resolution: str(r.resolution),
+    cancelledBy: (r.cancelled_by as string | null) ?? null,
   };
 }
 
@@ -223,7 +225,7 @@ async function fetchSnapshot(): Promise<DB> {
   const uid = session?.user.id ?? null;
   const signedIn = (table: string, orderBy: string) => (uid ? selectAll(table, orderBy) : Promise.resolve([]));
 
-  const [settings, profiles, listings, reviews, secrets, blocks, orders, ledger, messages, reports, adminLog, reads] =
+  const [settings, profiles, listings, reviews, secrets, blocks, orders, ledger, messages, reports, adminLog, reads, favs, searches] =
     await Promise.all([
       selectAll('settings', 'id'),
       selectAll('profiles', 'created_at'),
@@ -237,6 +239,8 @@ async function fetchSnapshot(): Promise<DB> {
       signedIn('reports', 'created_at'),
       signedIn('admin_log', 'created_at'),
       signedIn('chat_reads', 'order_id'),
+      signedIn('favorites', 'created_at'),
+      signedIn('saved_searches', 'created_at'),
     ]);
 
   const exact = new Map(secrets.map((r) => [str(r.listing_id), { lat: num(r.lat), lng: num(r.lng) }]));
@@ -259,6 +263,7 @@ async function fetchSnapshot(): Promise<DB> {
     blocked: blockedBy.get(str(r.id)) ?? [],
     color: str(r.color) || '#00A078',
     createdAt: msReq(r.created_at),
+    completedDeals: num(r.completed_deals),
   }));
 
   const imagePaths = messages.map((m) => m.image).filter((p): p is string => typeof p === 'string' && p !== '');
@@ -298,6 +303,17 @@ async function fetchSnapshot(): Promise<DB> {
     settings: toSettings(settings[0]),
     adminLog: adminLog.map(toAdminLog),
     lastRead,
+    favorites: favs.map((r) => ({ userId: str(r.user_id), listingId: str(r.listing_id), createdAt: msReq(r.created_at) })),
+    savedSearches: searches.map((r) => ({
+      id: str(r.id),
+      userId: str(r.user_id),
+      keyword: str(r.keyword),
+      category: (r.category as SavedSearch['category']) ?? null,
+      radiusKm: num(r.radius_km),
+      lat: num(r.lat),
+      lng: num(r.lng),
+      createdAt: msReq(r.created_at),
+    })),
     auth,
   };
 }
@@ -317,6 +333,8 @@ function emptySnapshot(error: string): DB {
     settings: { ...DEFAULT_SETTINGS },
     adminLog: [],
     lastRead: {},
+    favorites: [],
+    savedSearches: [],
     auth: null,
     loadError: error,
   };
@@ -393,6 +411,8 @@ const REALTIME_TABLES = [
   'reports',
   'admin_log',
   'chat_reads',
+  'favorites',
+  'saved_searches',
 ];
 
 let channel: RealtimeChannel | null = null;
@@ -533,6 +553,26 @@ export const remoteActions = {
   },
 
   closeListing: (listingId: string) => rpc<null>('close_listing', { p_listing: listingId }),
+
+  updateListingLocation: (listingId: string, location: LatLng, areaLabel: string) =>
+    rpc<null>('update_listing_location', {
+      p_listing: listingId,
+      p_lat: location.lat,
+      p_lng: location.lng,
+      p_area_label: areaLabel,
+    }),
+
+  toggleFavorite: (listingId: string) => rpc<boolean>('toggle_favorite', { p_listing: listingId }),
+
+  saveSearch: (input: SavedSearchInput) =>
+    rpc<string>('save_search', {
+      p_keyword: input.keyword,
+      p_category: input.category ?? '',
+      p_radius_km: input.radiusKm,
+      p_lat: input.lat,
+      p_lng: input.lng,
+    }),
+  deleteSavedSearch: (id: string) => rpc<null>('delete_saved_search', { p_id: id }),
 
   requestListing: (listingId: string, opts: { note: string; swapOffer: string }) =>
     rpc<string>('request_listing', { p_listing: listingId, p_note: opts.note, p_swap_offer: opts.swapOffer }),

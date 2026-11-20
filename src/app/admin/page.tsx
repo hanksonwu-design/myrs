@@ -22,6 +22,7 @@ import type { DB, Settings } from '@/lib/types';
 import { ListingThumb } from '@/components/ListingVisuals';
 import { Avatar, Loading, Modal, ModeBadge } from '@/components/ui';
 import { useRequireLogin } from '@/components/hooks';
+import { PointsHealth } from '@/components/PointsHealth';
 import { useToast } from '@/components/Providers';
 import { listingPath, userPath } from '@/lib/links';
 
@@ -176,6 +177,7 @@ function Dashboard({ d }: { d: DB }) {
         <Stat label="平台發出點數" value={issued} sub="新手、獎勵、調整" />
         <Stat label="累計愛心值" value={love} sub="免費贈送完成後累積" />
       </div>
+      <PointsHealth d={d} />
     </div>
   );
 }
@@ -505,7 +507,7 @@ function UserAdmin({ d }: { d: DB }) {
 
 // ---------------------------------------------------------------- settings
 
-const SETTING_FIELDS: { key: keyof Settings; label: string; unit: string }[] = [
+const SETTING_FIELDS: { key: keyof Settings; label: string; unit: string; min?: number }[] = [
   { key: 'feeRate', label: '手續費比例', unit: '（0.1 = 10%）' },
   { key: 'minFee', label: '最低手續費', unit: '點' },
   { key: 'signupBonus', label: '新手點數', unit: '點' },
@@ -516,12 +518,25 @@ const SETTING_FIELDS: { key: keyof Settings; label: string; unit: string }[] = [
   { key: 'freeDailyLimit', label: '免費索取每日上限', unit: '件' },
   { key: 'newAccountDays', label: '新帳號觀察期', unit: '天' },
   { key: 'newAccountPointsCap', label: '新帳號點數交易上限', unit: '點' },
-  { key: 'requestTimeoutHours', label: '索取逾時自動取消', unit: '小時' },
-  { key: 'autoCompleteHours', label: '單方確認後自動完成', unit: '小時' },
+  { key: 'requestTimeoutHours', label: '索取逾時自動取消', unit: '小時', min: 1 },
+  { key: 'autoCompleteHours', label: '單方確認後自動完成', unit: '小時', min: 1 },
   { key: 'acceptTimeoutDays', label: '接受後都沒人確認，自動取消', unit: '天（0 = 不取消）' },
-  { key: 'reviewWindowDays', label: '評價期限', unit: '天' },
-  { key: 'reportHideThreshold', label: '檢舉幾人自動隱藏', unit: '人' },
+  { key: 'reviewWindowDays', label: '評價期限', unit: '天', min: 1 },
+  { key: 'reportHideThreshold', label: '檢舉幾人自動隱藏', unit: '人', min: 1 },
 ];
+
+/** The same limits the server checks, worded with the field names admins see. */
+function settingsError(patch: Partial<Settings>): string | null {
+  for (const f of SETTING_FIELDS) {
+    const v = patch[f.key];
+    if (v === undefined) continue;
+    if (!Number.isFinite(v) || v < 0) return `「${f.label}」必須是 0 以上的數字`;
+    if (f.min !== undefined && v < f.min) return `「${f.label}」至少要是 ${f.min}`;
+  }
+  const a = patch.acceptTimeoutDays;
+  if (a !== undefined && a > 0 && a < 1) return '「接受後都沒人確認，自動取消」要是 0（不取消）或 1 以上';
+  return null;
+}
 
 function SettingsForm({ d }: { d: DB }) {
   const toast = useToast();
@@ -534,6 +549,8 @@ function SettingsForm({ d }: { d: DB }) {
       onSubmit={async (e) => {
         e.preventDefault();
         const patch = Object.fromEntries(SETTING_FIELDS.map((f) => [f.key, Number(form[f.key])])) as Partial<Settings>;
+        const bad = settingsError(patch);
+        if (bad) return toast(bad, 'error');
         const r = await actions.adminUpdateSettings(patch);
         toast(r.ok ? '參數已更新' : r.error, r.ok ? 'success' : 'error');
       }}

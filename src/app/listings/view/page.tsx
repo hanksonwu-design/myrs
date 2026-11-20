@@ -3,12 +3,27 @@
 import { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeftRight, BadgeCheck, Calendar, ChevronLeft, Clock, Heart, MapPin, Package, Store, TriangleAlert } from 'lucide-react';
+import {
+  ArrowLeftRight,
+  BadgeCheck,
+  Calendar,
+  ChevronLeft,
+  Clock,
+  Heart,
+  MapPin,
+  Navigation,
+  Package,
+  Pencil,
+  Store,
+  TriangleAlert,
+} from 'lucide-react';
 import {
   actions,
   balanceOf,
+  canSeeExact,
   currentUser,
   isBlockedBetween,
+  isFavorite,
   listingById,
   nowOf,
   OPEN_STATUSES,
@@ -18,11 +33,15 @@ import {
 } from '@/lib/store';
 import { CATEGORIES, LISTING_STATUS_LABEL, ORDER_STATUS_LABEL } from '@/lib/rules';
 import { distanceKm, publicLocationOf } from '@/lib/geo';
+import { directionsUrl } from '@/lib/geocode';
+import type { LatLng } from '@/lib/types';
 import { formatDate, formatDistance, timeAgo } from '@/lib/format';
 import { ExpiryTag, ListingThumb } from '@/components/ListingVisuals';
 import { MapView } from '@/components/map/MapView';
 import { Avatar, Modal, ModeBadge, NotFound, OrderStatusBadge, Stars } from '@/components/ui';
 import { BlockButton, ReportButton } from '@/components/ReportBlock';
+import { LocationPicker } from '@/components/LocationPicker';
+import { TrustBadge } from '@/components/TrustBadge';
 import { useMyPosition } from '@/components/hooks';
 import { useToast } from '@/components/Providers';
 import { chatPath, listingPath, userPath } from '@/lib/links';
@@ -38,6 +57,11 @@ function ListingPage() {
   const [note, setNote] = useState('');
   const [swapOffer, setSwapOffer] = useState('');
   const [sending, setSending] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editLoc, setEditLoc] = useState<LatLng | null>(null);
+  const [editLabel, setEditLabel] = useState('');
+  const [editAuto, setEditAuto] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const l = listingById(d, id);
   const me = currentUser(d);
@@ -45,6 +69,11 @@ function ListingPage() {
     return <NotFound text="找不到這則刊登，可能已被下架。" />;
   }
   const owner = userById(d, l.ownerId);
+  const involved = !!me && (l.ownerId === me.id || me.role === 'admin' || d.orders.some((o) => o.listingId === l.id && o.requesterId === me.id));
+  // Same rule as the server: a suspended member's listings are hidden from everyone else.
+  if (owner && owner.status !== 'active' && !involved) {
+    return <NotFound text="找不到這則刊登，可能已被下架。" />;
+  }
   const rating = ratingOf(d, l.ownerId);
   const now = nowOf(d);
   const isOwner = me?.id === l.ownerId;
@@ -56,6 +85,34 @@ function ListingPage() {
   const requests = d.orders.filter((o) => o.listingId === l.id);
   const blocked = me ? isBlockedBetween(d, me.id, l.ownerId) : false;
   const balance = me ? balanceOf(d, me.id) : 0;
+  const exact = canSeeExact(d, l, me?.id);
+  const fav = isFavorite(d, me?.id, l.id);
+  const dealOn = requests.some((o) => o.status === 'accepted' || o.status === 'disputed');
+  const canMove = isOwner && ['active', 'pending_review', 'reserved'].includes(l.status);
+
+  const toggleFav = async () => {
+    if (!me) return router.push(`/login?next=${encodeURIComponent(listingPath(l.id))}`);
+    const r = await actions.toggleFavorite(l.id);
+    if (!r.ok) return toast(r.error, 'error');
+    toast(r.value ? '已加入收藏，可以在「我的」頁面找到' : '已取消收藏', r.value ? 'success' : 'info');
+  };
+
+  const openEdit = () => {
+    setEditLoc(l.location);
+    setEditLabel(l.areaLabel);
+    setEditAuto(false);
+    setEditOpen(true);
+  };
+
+  const saveLocation = async () => {
+    if (!editLoc) return;
+    setSaving(true);
+    const r = await actions.updateListingLocation(l.id, editLoc, editLabel);
+    setSaving(false);
+    if (!r.ok) return toast(r.error, 'error');
+    setEditOpen(false);
+    toast('已更新面交地點');
+  };
 
   const submit = async () => {
     setSending(true);
@@ -121,7 +178,20 @@ function ListingPage() {
               </span>
               <ExpiryTag listing={l} now={now} />
             </div>
-            <h1 className="text-2xl font-bold leading-snug">{l.title}</h1>
+            <div className="flex items-start justify-between gap-2">
+              <h1 className="text-2xl font-bold leading-snug">{l.title}</h1>
+              {!isOwner && (
+                <button
+                  className={`btn btn-ghost -mr-2 shrink-0 px-2 ${fav ? 'text-m-rose' : 'text-slate-400'}`}
+                  onClick={toggleFav}
+                  aria-pressed={fav}
+                  aria-label={fav ? '取消收藏' : '收藏'}
+                  title={fav ? '取消收藏' : '收藏'}
+                >
+                  <Heart className={`size-6 ${fav ? 'fill-current' : ''}`} />
+                </button>
+              )}
+            </div>
             <p className="mt-1 text-sm text-slate-500">
               {timeAgo(l.createdAt, now)}刊登 · {formatDistance(distanceKm(pos.point, publicLoc))}
             </p>
@@ -187,6 +257,7 @@ function ListingPage() {
                   )}
                 </p>
                 <p className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                  <TrustBadge d={d} userId={owner.id} />
                   {rating.count ? (
                     <span className="flex items-center gap-1">
                       <Stars value={rating.avg} size={12} />
@@ -291,10 +362,54 @@ function ListingPage() {
           {l.areaLabel}
         </h2>
         <p className="mb-2 text-sm text-slate-500">
-          圓圈是約略範圍（約 200 公尺）。對方接受索取後，聊天室會顯示精確面交地點。
+          {!exact
+            ? '圓圈是約略範圍（約 200 公尺）。對方接受索取後，聊天室會顯示精確面交地點。'
+            : isOwner
+              ? '圖釘是精確面交地點，只有你和你接受索取的人看得到；其他人只看到約 200 公尺的範圍。'
+              : myOrder
+                ? '你的索取已被接受，圖釘是精確面交地點。'
+                : '管理員檢視：圖釘是精確面交地點。'}
         </p>
-        <MapView center={publicLoc} zoom={16} fuzzyCircle={publicLoc} className="h-64" />
+        {exact ? (
+          <MapView center={l.location} zoom={17} markers={[{ id: 'exact', position: l.location, color: '#00A078' }]} className="h-64" />
+        ) : (
+          <MapView center={publicLoc} zoom={16} fuzzyCircle={publicLoc} className="h-64" />
+        )}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {exact && !isOwner && (
+            <a href={directionsUrl(l.location)} target="_blank" rel="noopener noreferrer" className="btn btn-outline">
+              <Navigation className="size-4" />
+              用 Google 地圖導航
+            </a>
+          )}
+          {canMove && !dealOn && (
+            <button className="btn btn-outline" onClick={openEdit}>
+              <Pencil className="size-4" />
+              修改面交地點
+            </button>
+          )}
+          {canMove && dealOn && <p className="text-xs text-slate-500">已經有接受的交易，要換地點請在聊天室和對方另約。</p>}
+        </div>
       </section>
+
+      <Modal open={editOpen} title="修改面交地點" onClose={() => setEditOpen(false)}>
+        <LocationPicker
+          value={editLoc}
+          onChange={setEditLoc}
+          label={editLabel}
+          labelAuto={editAuto}
+          onLabel={(text, auto) => {
+            setEditLabel(text);
+            setEditAuto(auto);
+          }}
+          fallback={l.location}
+          mapClassName="h-56"
+        />
+        <p className="mt-2 text-xs text-slate-500">其他人看到的約略範圍會跟著更新。</p>
+        <button className="btn btn-primary mt-3 w-full" onClick={saveLocation} disabled={saving || !editLoc || !editLabel.trim()}>
+          {saving ? '儲存中…' : '儲存新地點'}
+        </button>
+      </Modal>
 
       <Modal open={open} title={l.mode === 'swap' ? '提出交換' : '索取'} onClose={() => setOpen(false)}>
         <div className="mb-4 flex items-center gap-3">

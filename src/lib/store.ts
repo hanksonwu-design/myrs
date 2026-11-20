@@ -26,6 +26,7 @@ import type {
   Order,
   OrderStatus,
   Review,
+  SavedSearch,
   Settings,
   User,
 } from './types';
@@ -53,8 +54,15 @@ function load(): DB {
     const raw = window.localStorage.getItem(KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as DB;
-      // Settings added later get their defaults.
-      if (parsed && parsed.version === DB_VERSION) return { ...parsed, settings: { ...DEFAULT_SETTINGS, ...parsed.settings } };
+      // Settings and collections added later get their defaults.
+      if (parsed && parsed.version === DB_VERSION) {
+        return {
+          ...parsed,
+          favorites: parsed.favorites ?? [],
+          savedSearches: parsed.savedSearches ?? [],
+          settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
+        };
+      }
     }
   } catch {
     /* fall through to a fresh seed */
@@ -213,6 +221,61 @@ export function isBlockedBetween(d: DB, a: string, b: string): boolean {
   return !!(ua?.blocked.includes(b) || ub?.blocked.includes(a));
 }
 
+/** Who may see the exact meeting spot: owner, admin, or a requester whose deal is on. */
+export function canSeeExact(d: DB, l: Listing, userId: string | null | undefined): boolean {
+  if (!userId) return false;
+  if (l.ownerId === userId || userById(d, userId)?.role === 'admin') return true;
+  return d.orders.some(
+    (o) =>
+      o.listingId === l.id &&
+      o.requesterId === userId &&
+      (o.status === 'accepted' || o.status === 'disputed' || o.status === 'completed'),
+  );
+}
+
+export const isFavorite = (d: DB, userId: string | null | undefined, listingId: string) =>
+  !!userId && d.favorites.some((f) => f.userId === userId && f.listingId === listingId);
+
+/** Completed deals: counted by the server in Supabase mode, from the orders in demo mode. */
+export function completedDealsOf(d: DB, userId: string): number {
+  const u = userById(d, userId);
+  if (u?.completedDeals !== undefined) return u.completedDeals;
+  return d.orders.filter((o) => o.status === 'completed' && isParty(o, userId)).length;
+}
+
+export type TrustTone = 'new' | 'high' | 'good' | 'ok' | 'low';
+export interface Trust {
+  score: number;
+  label: string;
+  tone: TrustTone;
+  deals: number;
+}
+
+/**
+ * Trust score 0–100 shown next to members. Starts at 50; completed deals add up to
+ * 30 (2 each), the average rating moves it up to ±15 around 3 stars, and an
+ * account older than 30 days adds 5.
+ */
+export function trustOf(d: DB, userId: string): Trust {
+  const u = userById(d, userId);
+  const deals = completedDealsOf(d, userId);
+  const rating = ratingOf(d, userId);
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+  const age = u ? (nowOf(d) - u.createdAt) / DAY : 0;
+  const score = Math.round(
+    clamp(
+      50 + Math.min(30, deals * 2) + (rating.count ? clamp((rating.avg - 3) * 7.5, -15, 15) : 0) + (age >= 30 ? 5 : 0),
+      0,
+      100,
+    ),
+  );
+  if (deals === 0) return { score, label: '新朋友', tone: 'new', deals };
+  if (score >= 85) return { score, label: '非常可信', tone: 'high', deals };
+  if (score >= 70) return { score, label: '可信', tone: 'good', deals };
+  if (score >= 55) return { score, label: '普通', tone: 'ok', deals };
+  return { score, label: '請留意', tone: 'low', deals };
+}
+
 // ---------------------------------------------------------------- internal helpers
 
 function addLedger(
@@ -252,6 +315,7 @@ function cancelOrder(d: DB, o: Order, reason: string) {
   o.status = 'cancelled';
   o.cancelledAt = nowOf(d);
   o.cancelReason = reason;
+  o.cancelledBy = d.sessionUserId;
   if (o.mode === 'points' && o.points > 0) {
     addLedger(d, {
       userId: o.requesterId,
@@ -363,6 +427,13 @@ function runMaintenance(d: DB): boolean {
   return changed;
 }
 
+/** A suspended member's unanswered requests, both ways, end now. */
+function cancelRequestsOf(d: DB, userId: string) {
+  for (const o of d.orders) {
+    if (o.status === 'requested' && isParty(o, userId)) cancelOrder(d, o, '對方帳號目前無法使用，系統已自動取消');
+  }
+}
+
 function requireUser(d: DB): User | { error: string } {
   const u = currentUser(d);
   return u ?? { error: '請先登入' };
@@ -414,8 +485,17 @@ export function validateListing(input: NewListingInput, today: string): string |
   }
   if (input.photos.length > 6) return '照片最多 6 張';
   if (!input.areaLabel.trim()) return '請填寫地點名稱，例如「捷運大安站附近」';
+  if (input.areaLabel.trim().length > 40) return '地點名稱最多 40 個字';
   if (!input.timeSlots.trim()) return '請填寫可面交的時段';
   return null;
+}
+
+export interface SavedSearchInput {
+  keyword: string;
+  category: Category | null;
+  radiusKm: number;
+  lat: number;
+  lng: number;
 }
 
 // ---------------------------------------------------------------- demo-mode actions
@@ -516,6 +596,14 @@ const localActions = {
       const me = userById(d, u.id)!;
       const blocked = me.blocked.includes(otherId);
       me.blocked = blocked ? me.blocked.filter((x) => x !== otherId) : [...me.blocked, otherId];
+      if (!blocked) {
+        // Deals that have not started end now; confirmed or disputed ones run their course.
+        for (const o of d.orders) {
+          const between = (o.requesterId === u.id && o.providerId === otherId) || (o.requesterId === otherId && o.providerId === u.id);
+          const notStarted = o.status === 'requested' || (o.status === 'accepted' && !o.requesterDoneAt && !o.providerDoneAt);
+          if (between && notStarted) cancelOrder(d, o, '其中一方無法繼續這筆交易，系統已自動取消');
+        }
+      }
       return ok(!blocked);
     });
   },
@@ -574,13 +662,84 @@ const localActions = {
     });
   },
 
+  updateListingLocation(listingId: string, location: LatLng, areaLabel: string): Result {
+    return mutate((d) => {
+      const u = requireUser(d);
+      if ('error' in u) return fail(u.error);
+      const l = listingById(d, listingId);
+      if (!l || l.ownerId !== u.id) return fail('找不到這則刊登');
+      if (!['active', 'pending_review', 'reserved'].includes(l.status)) return fail('這則刊登已經結束，不能修改地點');
+      if (d.orders.some((o) => o.listingId === l.id && (o.status === 'accepted' || o.status === 'disputed'))) {
+        return fail('已經有接受的交易，請在聊天室和對方另約地點');
+      }
+      const label = areaLabel.trim();
+      if (!label) return fail('請填寫地點名稱，例如「捷運大安站附近」');
+      if (label.length > 40) return fail('地點名稱最多 40 個字');
+      l.location = location;
+      l.areaLabel = label;
+      return ok(null);
+    });
+  },
+
+  toggleFavorite(listingId: string): Result<boolean> {
+    return mutate((d) => {
+      const u = requireUser(d);
+      if ('error' in u) return fail(u.error);
+      const i = d.favorites.findIndex((f) => f.userId === u.id && f.listingId === listingId);
+      if (i >= 0) {
+        d.favorites.splice(i, 1);
+        return ok(false);
+      }
+      const l = listingById(d, listingId);
+      if (!l || !['active', 'reserved'].includes(l.status) || isBlockedBetween(d, u.id, l.ownerId)) {
+        return fail('這則刊登目前無法收藏');
+      }
+      if (l.ownerId === u.id) return fail('不能收藏自己的刊登');
+      if (d.favorites.filter((f) => f.userId === u.id).length >= 200) return fail('收藏最多 200 則，請先取消一些');
+      d.favorites.push({ userId: u.id, listingId, createdAt: nowOf(d) });
+      return ok(true);
+    });
+  },
+
+  saveSearch(input: SavedSearchInput): Result<string> {
+    return mutate((d) => {
+      const u = requireUser(d);
+      if ('error' in u) return fail(u.error);
+      const keyword = input.keyword.trim();
+      if (!keyword) return fail('請輸入關鍵字');
+      if (keyword.length > 20) return fail('關鍵字最多 20 個字');
+      if (!(input.radiusKm >= 0.5 && input.radiusKm <= 20)) return fail('範圍要在 0.5 到 20 公里之間');
+      const mine = d.savedSearches.filter((s) => s.userId === u.id);
+      const same = mine.find((s) => s.keyword.toLowerCase() === keyword.toLowerCase() && s.category === input.category);
+      if (same) {
+        Object.assign(same, { radiusKm: input.radiusKm, lat: input.lat, lng: input.lng });
+        return ok(same.id);
+      }
+      if (mine.length >= 5) return fail('關鍵字通知最多 5 個，請先刪掉不需要的');
+      const s: SavedSearch = { id: uid('s'), userId: u.id, ...input, keyword, createdAt: nowOf(d) };
+      d.savedSearches.push(s);
+      return ok(s.id);
+    });
+  },
+
+  deleteSavedSearch(id: string): Result {
+    return mutate((d) => {
+      const u = requireUser(d);
+      if ('error' in u) return fail(u.error);
+      const i = d.savedSearches.findIndex((s) => s.id === id && s.userId === u.id);
+      if (i < 0) return fail('找不到這個關鍵字通知');
+      d.savedSearches.splice(i, 1);
+      return ok(null);
+    });
+  },
+
   // ---- orders
   requestListing(listingId: string, opts: { note: string; swapOffer: string }): Result<string> {
     return mutate((d) => {
       const u = requireUser(d);
       if ('error' in u) return fail(u.error);
       const l = listingById(d, listingId);
-      if (!l || l.status !== 'active') return fail('這則刊登目前無法索取');
+      if (!l || l.status !== 'active' || userById(d, l.ownerId)?.status !== 'active') return fail('這則刊登目前無法索取');
       if (l.ownerId === u.id) return fail('不能索取自己的刊登');
       if (isBlockedBetween(d, u.id, l.ownerId)) return fail('你和對方之間有封鎖，無法索取');
       if (l.remaining <= 0) return fail('已經被索取完了');
@@ -591,8 +750,13 @@ const localActions = {
       const s = d.settings;
       if (l.mode === 'free') {
         const today = ymdLocal(t);
+        // Requests someone else declined or cancelled do not use up the quota.
         const n = d.orders.filter(
-          (o) => o.requesterId === u.id && o.mode === 'free' && ymdLocal(o.createdAt) === today,
+          (o) =>
+            o.requesterId === u.id &&
+            o.mode === 'free' &&
+            ymdLocal(o.createdAt) === today &&
+            (o.status !== 'cancelled' || o.cancelledBy === u.id),
         ).length;
         if (n >= s.freeDailyLimit) return fail(`免費索取每天最多 ${s.freeDailyLimit} 件，明天再來吧`);
       }
@@ -649,6 +813,8 @@ const localActions = {
       if (o.status !== 'requested') return fail('這筆索取已經處理過了');
       const l = listingById(d, o.listingId);
       if (!l || l.remaining <= 0) return fail('數量不足，無法接受');
+      if (l.status !== 'active') return fail('這則刊登目前暫停中，不能接受索取');
+      if (isBlockedBetween(d, o.requesterId, u.id)) return fail('你和對方之間有封鎖，不能接受');
       o.status = 'accepted';
       o.acceptedAt = nowOf(d);
       l.remaining -= 1;
@@ -827,15 +993,29 @@ const localActions = {
       if ('error' in a) return fail(a.error);
       const l = listingById(d, listingId);
       if (!l) return fail('找不到這則刊登');
-      if (status === 'removed') {
-        for (const o of d.orders) {
-          if (o.listingId === l.id && OPEN_STATUSES.includes(o.status)) {
-            cancelOrder(d, o, '刊登已被管理員下架');
+      if (status === 'active') {
+        if (l.status !== 'pending_review') return fail('只有待審核的刊登可以核准');
+        if (l.expiresOn && l.expiresOn < ymdLocal(nowOf(d))) return fail('這項食品已經過期，不能核准');
+        // Approving means the admin checked it: flagged words and open reports are settled.
+        l.status = l.remaining > 0 ? 'active' : 'reserved';
+        l.flaggedWords = [];
+        for (const r of d.reports) {
+          if (r.targetId === l.id && r.status === 'open') {
+            r.status = 'dismissed';
+            r.handledBy = a.id;
           }
         }
+        logAdmin(d, a, `核准刊登「${l.title}」`);
+        return ok(null);
       }
-      l.status = status;
-      logAdmin(d, a, `${status === 'active' ? '核准' : '下架'}刊登「${l.title}」`);
+      if (l.status === 'removed') return fail('這則刊登已經下架了');
+      for (const o of d.orders) {
+        if (o.listingId === l.id && OPEN_STATUSES.includes(o.status)) {
+          cancelOrder(d, o, '刊登已被管理員下架');
+        }
+      }
+      l.status = 'removed';
+      logAdmin(d, a, `下架刊登「${l.title}」`);
       return ok(null);
     });
   },
@@ -878,6 +1058,7 @@ const localActions = {
       const target = targetUserId ? userById(d, targetUserId) : null;
       if (!target || target.role === 'admin') return fail('無法停權這個帳號');
       target.status = 'suspended';
+      cancelRequestsOf(d, target.id);
       close('resolved');
       logAdmin(d, a, `依檢舉停權「${target.name}」`);
       return ok(null);
@@ -908,7 +1089,9 @@ const localActions = {
       const u = userById(d, userId);
       if (!u || u.status === 'deleted') return fail('找不到這個使用者');
       if (u.role === 'admin') return fail('不能停權管理員');
+      const was = u.status;
       u.status = status;
+      if (status === 'suspended' && was !== 'suspended') cancelRequestsOf(d, u.id);
       logAdmin(d, a, `${status === 'active' ? '恢復' : '停權'}使用者「${u.name}」`);
       return ok(null);
     });
@@ -945,8 +1128,11 @@ const localActions = {
     return mutate((d) => {
       const a = requireAdmin(d);
       if ('error' in a) return fail(a.error);
+      const atLeastOne = ['requestTimeoutHours', 'autoCompleteHours', 'reviewWindowDays', 'reportHideThreshold'];
       for (const [k, v] of Object.entries(patch)) {
         if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return fail(`「${k}」必須是 0 以上的數字`);
+        if (atLeastOne.includes(k) && v < 1) return fail(`「${k}」至少要是 1`);
+        if (k === 'acceptTimeoutDays' && v > 0 && v < 1) return fail(`「${k}」要是 0（關閉）或 1 以上`);
       }
       if (patch.feeRate !== undefined && patch.feeRate > 0.5) return fail('手續費比例不能超過 50%');
       d.settings = { ...d.settings, ...patch };

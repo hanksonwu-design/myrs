@@ -455,5 +455,7 @@ export function createSeed(now: number): DB {
     settings,
     adminLog: [],
     lastRead: {},
+    favorites: [],
+    savedSearches: [],
   };
 }

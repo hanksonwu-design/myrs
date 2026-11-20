@@ -79,10 +79,14 @@ export function findBannedWords(text: string): string[] {
   return BANNED_WORDS.filter((w) => text.includes(w));
 }
 
-/** Fee charged to the provider on a points deal: rate, rounded up, at least minFee. */
+/**
+ * Fee charged to the provider on a points deal: rate, rounded up, at least minFee,
+ * but never the whole price, so the provider always gets at least 1 point.
+ * Same rule as private.calc_fee in Supabase.
+ */
 export function calcFee(points: number, s: Settings): number {
-  if (points <= 0) return 0;
-  return Math.max(s.minFee, Math.ceil(points * s.feeRate));
+  if (points <= 1) return 0;
+  return Math.min(Math.max(s.minFee, Math.ceil(points * s.feeRate)), points - 1);
 }
 
 export const PHONE_RE = /^09\d{8}$/;

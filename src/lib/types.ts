@@ -38,6 +38,8 @@ export interface User {
   blocked: string[];
   color: string;
   createdAt: number;
+  /** Supabase mode: completed deals counted by the server (others' orders are not visible). */
+  completedDeals?: number;
 }
 
 export interface Listing {
@@ -85,6 +87,8 @@ export interface Order {
   disputeReason: string;
   disputeBy: string | null;
   resolution: string;
+  /** Who cancelled it (null for automatic cancellations). Demo mode only. */
+  cancelledBy?: string | null;
 }
 
 export interface LedgerEntry {
@@ -148,6 +152,22 @@ export interface Settings {
   acceptTimeoutDays: number;
 }
 
+export interface Favorite {
+  userId: string;
+  listingId: string;
+  createdAt: number;
+}
+/** A keyword alert: new listings matching it within radiusKm of (lat, lng) send an e-mail. */
+export interface SavedSearch {
+  id: string;
+  userId: string;
+  keyword: string;
+  category: Category | null;
+  radiusKm: number;
+  lat: number;
+  lng: number;
+  createdAt: number;
+}
 export interface AdminLog {
   id: string;
   adminId: string;
@@ -169,6 +189,8 @@ export interface DB {
   settings: Settings;
   adminLog: AdminLog[];
   lastRead: Record<string, number>; // `${userId}:${orderId}` -> time
+  favorites: Favorite[];
+  savedSearches: SavedSearch[];
   /** Supabase mode only: who is signed in, and whether they still need a profile. */
   auth?: { identity: string; state: 'needs_signup' | 'ok' | 'suspended' } | null;
   /** Supabase mode only: set when the first load failed (e.g. migrations not applied). */

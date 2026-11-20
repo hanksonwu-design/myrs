@@ -9,6 +9,7 @@ import type { DB, Order } from '@/lib/types';
 import { ListingThumb } from './ListingVisuals';
 import { Avatar, Modal, OrderStatusBadge } from './ui';
 import { useToast } from './Providers';
+import { TrustBadge } from './TrustBadge';
 import { chatPath, listingPath, userPath } from '@/lib/links';
 
 type Dialog = null | 'decline' | 'cancel' | 'dispute' | 'review';
@@ -75,6 +76,7 @@ export function OrderCard({ d, order: o, viewerId, inChat }: { d: DB; order: Ord
             <span>
               {iAmProvider ? '索取者' : '提供者'}：<Link href={userPath(other?.id)} className="hover:underline">{other?.name}</Link>
             </span>
+            {other && <TrustBadge d={d} userId={other.id} />}
           </p>
           <p className="mt-0.5 text-sm">
             {o.mode === 'points' ? (

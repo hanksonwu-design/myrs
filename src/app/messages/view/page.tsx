@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { ChevronLeft, ImagePlus, MapPin, Send } from 'lucide-react';
+import { ChevronLeft, ImagePlus, MapPin, Navigation, Send } from 'lucide-react';
 import { actions, chatOpen, counterpartId, isParty, listingById, orderById, useDB, userById } from '@/lib/store';
 import { formatDateTime, formatTime } from '@/lib/format';
 import { compressImage } from '@/lib/image';
@@ -13,6 +13,7 @@ import { Avatar, Loading, NotFound } from '@/components/ui';
 import { useRequireLogin } from '@/components/hooks';
 import { useToast } from '@/components/Providers';
 import { userPath } from '@/lib/links';
+import { directionsUrl } from '@/lib/geocode';
 
 function ChatPage() {
   const id = useSearchParams().get('id') ?? '';
@@ -74,6 +75,15 @@ function ChatPage() {
           {showMap && (
             <div className="mt-2">
               <MapView center={l.location} zoom={17} markers={[{ id: 'meet', position: l.location, color: '#00A078' }]} className="h-48" />
+              <a
+                href={directionsUrl(l.location)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-outline mt-2 w-full bg-white"
+              >
+                <Navigation className="size-4" />
+                用 Google 地圖導航
+              </a>
             </div>
           )}
         </div>

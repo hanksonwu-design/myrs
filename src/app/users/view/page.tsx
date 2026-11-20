@@ -9,6 +9,7 @@ import { formatDate, timeAgo } from '@/lib/format';
 import { ListingCard } from '@/components/ListingVisuals';
 import { Avatar, NotFound, Stars } from '@/components/ui';
 import { BlockButton, ReportButton } from '@/components/ReportBlock';
+import { TRUST_HELP, TrustBadge } from '@/components/TrustBadge';
 
 function UserPage() {
   const id = useSearchParams().get('id') ?? '';
@@ -42,6 +43,7 @@ function UserPage() {
           </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-4 text-sm">
+          <TrustBadge d={d} userId={u.id} deals />
           <span className="flex items-center gap-1">
             <Stars value={rating.avg} />
             {rating.count ? `${rating.avg.toFixed(1)}（${rating.count} 則）` : '還沒有評價'}
@@ -57,6 +59,7 @@ function UserPage() {
             </span>
           )}
         </div>
+        <p className="mt-2 text-xs text-slate-400">{TRUST_HELP}</p>
       </section>
 
       <section>

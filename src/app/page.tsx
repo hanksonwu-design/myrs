@@ -3,8 +3,9 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { List, LocateFixed, Map as MapIcon, Search, Sparkles } from 'lucide-react';
-import { currentUser, useDB } from '@/lib/store';
+import { BellPlus, BellRing, List, LocateFixed, Map as MapIcon, Search, Sparkles } from 'lucide-react';
+import { actions, currentUser, useDB } from '@/lib/store';
+import { IS_REMOTE } from '@/lib/backend';
 import { searchListings } from '@/lib/search';
 import { RADIUS_OPTIONS } from '@/lib/rules';
 import type { Category, Mode } from '@/lib/types';
@@ -46,6 +47,31 @@ export default function NearbyPage() {
   );
 
   const nextRadius = RADIUS_OPTIONS.find((r) => r > radius);
+  const keyword = q.trim();
+  const alertCat = category === 'all' ? null : category;
+  const subscribed =
+    !!user &&
+    d.savedSearches.some(
+      (s) => s.userId === user.id && s.keyword.toLowerCase() === keyword.toLowerCase() && s.category === alertCat,
+    );
+
+  const subscribe = async () => {
+    if (!user) return router.push('/login?next=/');
+    if (keyword.length > 20) return toast('關鍵字最多 20 個字', 'error');
+    const r = await actions.saveSearch({
+      keyword,
+      category: alertCat,
+      radiusKm: radius,
+      lat: pos.point.lat,
+      lng: pos.point.lng,
+    });
+    if (!r.ok) return toast(r.error, 'error');
+    toast(
+      IS_REMOTE
+        ? `已訂閱：${radius} 公里內有新的「${keyword}」會寄 Email 給你。可以在「我的」頁面管理。`
+        : `已訂閱「${keyword}」（示範模式不會真的寄信）`,
+    );
+  };
 
   const map = (
     <MapView
@@ -173,10 +199,24 @@ export default function NearbyPage() {
         </div>
       </div>
 
-      <p className="mb-3 text-sm text-slate-600">
-        {radius} 公里內有 <b className="text-brand-dark">{hits.length}</b> 則分享
-        <span className="text-slate-400">　位置為約略範圍，對方接受後才顯示精確地點</span>
-      </p>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-slate-600">
+          {radius} 公里內有 <b className="text-brand-dark">{hits.length}</b> 則分享
+          <span className="text-slate-400">　位置為約略範圍，對方接受後才顯示精確地點</span>
+        </p>
+        {keyword &&
+          (subscribed ? (
+            <Link href="/me" className="flex items-center gap-1 text-sm font-semibold text-brand-dark">
+              <BellRing className="size-4" />
+              已訂閱「{keyword}」通知
+            </Link>
+          ) : (
+            <button className="btn btn-outline py-1.5 text-sm" onClick={subscribe}>
+              <BellPlus className="size-4" />
+              有新的「{keyword}」通知我
+            </button>
+          ))}
+      </div>
 
       <div className="md:grid md:grid-cols-[1fr_minmax(320px,42%)] md:gap-4">
         <div className={view === 'map' ? 'hidden md:block' : ''}>

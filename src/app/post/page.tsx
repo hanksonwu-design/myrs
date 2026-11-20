@@ -5,11 +5,11 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Camera, Check, ChevronLeft, ImagePlus, Shirt, Utensils, X } from 'lucide-react';
 import { actions, nowOf, useDB, validateListing, type NewListingInput } from '@/lib/store';
-import { CATEGORIES, findBannedWords, MODE_LABEL, STORAGE_OPTIONS } from '@/lib/rules';
+import { calcFee, CATEGORIES, findBannedWords, MODE_LABEL, STORAGE_OPTIONS } from '@/lib/rules';
 import { ymdLocal } from '@/lib/format';
 import { compressImage } from '@/lib/image';
 import type { Category, LatLng, Listing, Mode } from '@/lib/types';
-import { MapView } from '@/components/map/MapView';
+import { LocationPicker } from '@/components/LocationPicker';
 import { ListingCard } from '@/components/ListingVisuals';
 import { Loading } from '@/components/ui';
 import { useMyPosition, useRequireLogin } from '@/components/hooks';
@@ -45,6 +45,8 @@ export default function PostPage() {
     areaLabel: '',
     timeSlots: '平日 18:00 後、週末全天',
   });
+  // The place name follows the pin until the user types their own.
+  const [labelAuto, setLabelAuto] = useState(true);
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }));
 
   if (!user) return <Loading />;
@@ -66,6 +68,7 @@ export default function PostPage() {
       if (f.mode === 'swap' && !f.swapWish.trim()) return '請寫下想交換的東西';
     }
     if (s === 4) {
+      if (!f.location) return '請選擇面交地點：搜尋地點、使用目前位置，或直接點地圖。';
       if (!f.areaLabel.trim()) return '請填寫地點名稱';
       if (!f.timeSlots.trim()) return '請填寫可面交時段';
     }
@@ -359,7 +362,7 @@ export default function PostPage() {
                   onChange={(e) => set('pricePoints', Math.floor(Number(e.target.value) || 0))}
                 />
                 <p className="mt-1 text-xs text-slate-500">
-                  成交後你實收 {Math.max(0, f.pricePoints - Math.max(d.settings.minFee, Math.ceil(f.pricePoints * d.settings.feeRate)))} 點
+                  成交後你實收 {Math.max(0, f.pricePoints - calcFee(f.pricePoints, d.settings))} 點
                 </p>
               </div>
             )}
@@ -385,28 +388,19 @@ export default function PostPage() {
           <>
             <div>
               <h2 className="text-lg font-bold">在哪裡面交？</h2>
-              <p className="text-sm text-slate-500">點地圖選位置。其他人只會看到約 200 公尺的範圍，你接受索取後對方才看得到精確位置。</p>
+              <p className="text-sm text-slate-500">其他人只會看到約 200 公尺的範圍，你接受索取後對方才看得到精確位置。</p>
             </div>
-            <MapView
-              center={location}
-              zoom={16}
-              markers={[{ id: 'pick', position: location, color: '#00A078' }]}
-              onMapClick={(p) => set('location', p)}
-              className="h-64"
+            <LocationPicker
+              value={f.location}
+              onChange={(p) => set('location', p)}
+              label={f.areaLabel}
+              labelAuto={labelAuto}
+              onLabel={(text, auto) => {
+                set('areaLabel', text);
+                setLabelAuto(auto);
+              }}
+              fallback={pos.point}
             />
-            <div>
-              <label className="label" htmlFor="area">
-                地點名稱（公開顯示）
-              </label>
-              <input
-                id="area"
-                className="input"
-                maxLength={30}
-                placeholder="例如：捷運大安站附近"
-                value={f.areaLabel}
-                onChange={(e) => set('areaLabel', e.target.value)}
-              />
-            </div>
             <div>
               <label className="label" htmlFor="slots">
                 可面交時段

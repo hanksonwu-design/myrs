@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import { Circle, MapContainer, Marker, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import type { LatLng } from '@/lib/types';
@@ -11,6 +11,7 @@ export interface MapMarker {
   color: string;
   label?: string;
   active?: boolean;
+  draggable?: boolean;
 }
 
 export interface MapViewProps {
@@ -23,6 +24,8 @@ export interface MapViewProps {
   userPosition?: LatLng | null;
   onMarkerClick?: (id: string) => void;
   onMapClick?: (p: LatLng) => void;
+  /** Called when a draggable marker is dropped. */
+  onMarkerDrag?: (id: string, p: LatLng) => void;
   className?: string;
 }
 
@@ -43,10 +46,15 @@ const youIcon = L.divIcon({
   html: '<span style="display:block;width:18px;height:18px;border-radius:9999px;background:#00A8E8;border:3px solid white;box-shadow:0 0 0 2px rgba(0,168,232,.35)"></span>',
 });
 
+// Follows the center; the zoom is reset only when the zoom prop itself changes, so a
+// user who zoomed in keeps that zoom while the map pans.
 function Recenter({ center, zoom }: { center: LatLng; zoom?: number }) {
   const map = useMap();
+  const lastZoom = useRef(zoom);
   useEffect(() => {
-    map.setView([center.lat, center.lng], zoom ?? map.getZoom(), { animate: true });
+    const z = zoom !== lastZoom.current ? zoom : undefined;
+    lastZoom.current = zoom;
+    map.setView([center.lat, center.lng], z ?? map.getZoom(), { animate: true });
   }, [center.lat, center.lng, zoom, map]);
   return null;
 }
@@ -79,6 +87,7 @@ export default function MapInner({
   userPosition,
   onMarkerClick,
   onMapClick,
+  onMarkerDrag,
   className = 'h-80',
 }: MapViewProps) {
   return (
@@ -118,7 +127,15 @@ export default function MapInner({
             position={[m.position.lat, m.position.lng]}
             icon={pin(m.color, !!m.active)}
             zIndexOffset={m.active ? 1000 : 0}
-            eventHandlers={{ click: () => onMarkerClick?.(m.id) }}
+            draggable={!!m.draggable}
+            autoPan={!!m.draggable}
+            eventHandlers={{
+              click: () => onMarkerClick?.(m.id),
+              dragend: (e) => {
+                const p = (e.target as L.Marker).getLatLng();
+                onMarkerDrag?.(m.id, { lat: p.lat, lng: p.lng });
+              },
+            }}
           >
             {m.label && <Tooltip direction="top" offset={[0, -26]}>{m.label}</Tooltip>}
           </Marker>
