@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useDB } from '@/lib/store';
 import { PILOT_NAME } from '@/lib/geo';
 import { WANT_DAYS } from '@/lib/rules';
+import { GOOGLE_LOGIN } from '@/lib/backend';
 import { Contact, LegalDoc, Operator, type Clause } from '@/components/Legal';
 
 /** 使用條款 (draft). The numbers come from the live settings, so they match what the site does. */
@@ -16,7 +17,12 @@ export default function TermsPage() {
       title: '帳號',
       body: (
         <ul>
-          <li>用 Email 收一次性驗證碼登入，不用設密碼。一個信箱只能有一個帳號，請用你自己的信箱，並保管好它；用你的帳號做的事，由你負責。</li>
+          <li>
+            {GOOGLE_LOGIN
+              ? '用 Google 帳戶登入，或用 Email 收一次性驗證碼登入，不用在 Myrs 設密碼。一個信箱只能有一個帳號（用 Google 登入和用同一個 Gmail 收驗證碼，是同一個帳號），請用你自己的帳戶和信箱，並保管好它；'
+              : '用 Email 收一次性驗證碼登入，不用設密碼。一個信箱只能有一個帳號，請用你自己的信箱，並保管好它；'}
+            用你的帳號做的事，由你負責。
+          </li>
           <li>不可以冒用別人的身分，也不可以為了拿獎勵點數建立多個帳號。</li>
           <li>暱稱和自介會公開給其他使用者看，不可以有冒犯、歧視、廣告或別人的個人資料。</li>
           <li>未滿 18 歲的人，要先讓法定代理人（例如父母）看過並同意這份條款才能使用，面交時也要有大人陪同。</li>

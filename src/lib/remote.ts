@@ -860,6 +860,21 @@ export const remoteAuth = {
     return ok(state);
   },
 
+  /**
+   * Leaves for Google's sign-in page. Supabase sends the member back to /login with the
+   * session in the address, and the client picks it up when the page loads.
+   */
+  async signInWithGoogle(): Promise<Result> {
+    const { error } = await supabase().auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}${BASE_PATH}/login`,
+        queryParams: { prompt: 'select_account' },
+      },
+    });
+    return error ? fail(authMessage(error)) : ok(null);
+  },
+
   completeSignup: (name: string) => rpc<{ bonus: number }>('complete_signup', { p_name: name }),
 
   async cancelSignup(): Promise<void> {

@@ -14,3 +14,8 @@ export const LOGIN_METHODS = (process.env.NEXT_PUBLIC_LOGIN_METHODS || 'email')
   .split(',')
   .map((s) => s.trim())
   .filter((m): m is 'phone' | 'email' => m === 'phone' || m === 'email');
+
+/** "google" in NEXT_PUBLIC_LOGIN_METHODS adds a Google button (needs the Google provider on in Supabase). */
+export const GOOGLE_LOGIN = (process.env.NEXT_PUBLIC_LOGIN_METHODS || '')
+  .split(',')
+  .some((s) => s.trim() === 'google');

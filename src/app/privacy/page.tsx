@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { LEGAL } from '@/lib/legal';
+import { GOOGLE_LOGIN } from '@/lib/backend';
 import { Contact, Fill, LegalDoc, Operator, type Clause } from '@/components/Legal';
 
 /**
@@ -41,6 +42,8 @@ export default function PrivacyPage() {
         <ul>
           <li>
             <b>帳號</b>：Email（只用來登入和寄通知，不會顯示給其他使用者），以及你填的暱稱和自介（會公開）。
+            {GOOGLE_LOGIN &&
+              '用 Google 帳戶登入時，Google 會提供你的 Email、Google 帳戶上的名字和大頭貼網址；Myrs 只用 Email，名字和大頭貼只留在登入系統裡，不會顯示，也不會拿來用。'}
           </li>
           <li>
             <b>刊登和徵求</b>：標題、描述、照片、數量、到期日、保存方式、可以面交的時段和位置。公開的位置會刻意偏移 60～180
@@ -89,7 +92,10 @@ export default function PrivacyPage() {
               <b>幫我們提供服務的公司</b>：
               <ul className="mt-1">
                 <li>Supabase：資料庫、登入、照片儲存。主機在{LEGAL.dataRegion}。</li>
-                <li>Google（Gmail）：寄登入驗證碼和通知信。</li>
+                <li>
+                  Google：用 Gmail 寄登入驗證碼和通知信
+                  {GOOGLE_LOGIN && '；你選擇用 Google 帳戶登入時，也由 Google 確認是你本人'}。
+                </li>
                 <li>GitHub：網站主機。</li>
                 <li>OpenStreetMap：顯示地圖；你搜尋地點或用定位找區域名稱時，搜尋的文字或座標會傳給它的服務。</li>
               </ul>
@@ -108,7 +114,8 @@ export default function PrivacyPage() {
         <ul>
           <li>帳號存在的期間，我們會保存你的資料。</li>
           <li>
-            刪除帳號時：進行中的交易會取消並退點、刊登會下架、暱稱改成「已刪除的使用者」、自介清空，登入用的 Email 也會刪除。
+            刪除帳號時：進行中的交易會取消並退點、刊登會下架、暱稱改成「已刪除的使用者」、自介清空，登入用的 Email 也會刪除
+            {GOOGLE_LOGIN && '（用 Google 登入的話，Google 提供的名字和大頭貼網址也一起刪除）'}。
           </li>
           <li>
             為了防止同一個人刪掉帳號再註冊、重複領新手和邀請獎勵，我們會留下一組由 Email 換算出來的代碼（雜湊值）。這組代碼裡沒有 Email
@@ -149,7 +156,11 @@ export default function PrivacyPage() {
         <ul>
           <li>網站和資料庫之間的傳輸都經過加密（HTTPS）。</li>
           <li>資料庫依照「每個人只能看到自己該看的資料」設定權限；管理員分級，操作都會留下紀錄。</li>
-          <li>登入不用密碼，每次都用一次性驗證碼，減少密碼外洩的風險。</li>
+          <li>
+            {GOOGLE_LOGIN
+              ? 'Myrs 不保存密碼：用 Google 帳戶或一次性驗證碼登入，減少密碼外洩的風險。'
+              : '登入不用密碼，每次都用一次性驗證碼，減少密碼外洩的風險。'}
+          </li>
           <li>如果發生個人資料外洩，我們會在查明後，用 Email 或站內通知等適當方式告訴你。</li>
         </ul>
       ),
