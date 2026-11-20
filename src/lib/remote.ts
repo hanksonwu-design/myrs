@@ -14,6 +14,7 @@ import { activeSuspension, suspensionNote } from './staff';
 import type {
   AdminLevel,
   AdminLog,
+  CommunityImpact,
   DB,
   Invite,
   LatLng,
@@ -724,6 +725,24 @@ export const remoteActions = {
       p_text: text,
       p_until: until === null ? null : new Date(until).toISOString(),
     }),
+  /** Counts only; visitors may call it too. Read only, so no refresh afterwards. */
+  async communityImpact(): Promise<Result<CommunityImpact>> {
+    const { data, error } = await supabase().rpc('community_impact');
+    if (error) return fail(friendly(error));
+    const r = (data ?? {}) as Row;
+    const counts = (c: unknown) => {
+      const x = (c ?? {}) as Row;
+      return { food: num(x.food), clothing: num(x.clothing), free: num(x.free), neighbours: num(x.neighbours) };
+    };
+    return ok({
+      month: counts(r.month),
+      total: counts(r.total),
+      wantsFound: num(r.wantsFound),
+      since: ms(r.since),
+      months: ((r.months as Row[] | null) ?? []).map((m) => ({ month: str(m.month), food: num(m.food), clothing: num(m.clothing) })),
+    });
+  },
+
   /** Read only, so no refresh afterwards. */
   async adminMailStatus(filter: 'problem' | 'all' = 'problem'): Promise<Result<MailStatus>> {
     const { data, error } = await supabase().rpc('admin_mail_status', { p_filter: filter, p_limit: 50 });

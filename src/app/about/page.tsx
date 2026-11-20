@@ -97,9 +97,12 @@ export default function AboutPage() {
         )}
       </section>
 
-      <div className="text-center">
+      <div className="flex flex-wrap justify-center gap-2">
         <Link href="/" className="btn btn-primary">
           開始逛附近
+        </Link>
+        <Link href="/impact" className="btn btn-outline">
+          看社區成果
         </Link>
       </div>
     </div>

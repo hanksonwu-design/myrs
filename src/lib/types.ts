@@ -262,6 +262,41 @@ export interface MailStatus {
   items: MailItem[];
 }
 
+/** Completed deals counted for the impact board (社區成果). One deal is one item. */
+export interface ImpactCounts {
+  food: number;
+  clothing: number;
+  /** Items given for free. */
+  free: number;
+  /** Members on either side of these deals. */
+  neighbours: number;
+}
+
+/** Counts for everyone; the same shape public.community_impact() returns (migration 11). */
+export interface CommunityImpact {
+  /** This calendar month, Taipei time. */
+  month: ImpactCounts;
+  total: ImpactCounts;
+  /** Wants (徵求) whose poster completed a deal on an answer. */
+  wantsFound: number;
+  /** When the first deal was completed. */
+  since: number | null;
+  /** The last six months, oldest first; month is YYYY-MM. */
+  months: { month: string; food: number; clothing: number }[];
+}
+
+/** One member's own deals. */
+export interface PersonalImpact {
+  gaveFood: number;
+  gaveClothing: number;
+  gaveFree: number;
+  /** Different neighbours who received something from this member. */
+  helped: number;
+  received: number;
+  /** This member's wants that a neighbour fulfilled. */
+  wantsFound: number;
+}
+
 export interface DB {
   version: number;
   clockOffsetMs: number; // demo "fast forward"

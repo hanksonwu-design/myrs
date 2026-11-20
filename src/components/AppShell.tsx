@@ -146,6 +146,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <footer className="hidden border-t border-slate-200 py-6 text-center text-xs text-slate-400 md:block">
         Myrs 你的我的共享平台 · 分享吾需⇄換取所需 ·{' '}
+        <Link href="/impact" className="underline hover:text-brand">
+          社區成果
+        </Link>{' '}
+        ·{' '}
         <Link href="/about" className="underline hover:text-brand">
           關於與規則
         </Link>

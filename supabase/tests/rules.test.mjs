@@ -29,6 +29,7 @@ await db.exec(migration('20261120000007_admin_levels.sql'));
 await db.exec(migration('20261120000008_admin_tools.sql'));
 await db.exec(migration('20261120000009_wants.sql'));
 await db.exec(migration('20261120000010_invites.sql'));
+await db.exec(migration('20261120000011_impact.sql'));
 console.log('migrations applied');
 
 let failures = 0;
@@ -911,7 +912,82 @@ const ir4 = await inviteRow(I4);
 check(ir4.rewarded_at !== null && ir4.invitee_points === 0 && (await mail(I1)).length === 0, 'with rewards off a deal settles the invite without points or mail');
 await as(ADM, `select admin_update_settings($1::jsonb)`, [JSON.stringify({ inviteReward: 20 })]);
 
-const sum = (await su(`select sum(amount)::int s from ledger where type in ('signup_bonus','reward','adjust')`))[0].s;
+console.log('community impact board (migration 11)');
+const K1 = '00000000-0000-0000-0000-0000000005e1';
+const K2 = '00000000-0000-0000-0000-0000000005e2';
+const K3 = '00000000-0000-0000-0000-0000000005e3';
+await su(`insert into auth.users values ('${K1}', '886977700001', null), ('${K2}', '886977700002', null), ('${K3}', '886977700003', null)`);
+for (const [u, n] of [[K1, '成果甲'], [K2, '成果乙'], [K3, '成果丙']]) await one(u, `select complete_signup($1)`, [n]);
+const impact = async (u = null) => (await one(u, `select community_impact() r`)).r;
+const doneCounts = async () =>
+  (await su(`select count(*) filter (where l.category = 'food')::int food, count(*) filter (where l.category = 'clothing')::int clothing,
+      count(*) filter (where o.mode = 'free')::int free,
+      (select count(distinct v.u)::int from orders x, lateral (values (x.requester_id), (x.provider_id)) v(u) where x.status = 'completed') neighbours
+    from orders o join listings l on l.id = o.listing_id where o.status = 'completed'`))[0];
+const thisMonth = (await su(`select to_char(now() at time zone 'Asia/Taipei', 'YYYY-MM') m`))[0].m;
+const dealOn = async (provider, requester, lid) => {
+  const oid = (await one(requester, `select request_listing($1, '', '') r`, [lid])).r;
+  await as(provider, `select accept_order($1)`, [oid]);
+  await as(provider, `select mark_done($1)`, [oid]);
+  await as(requester, `select mark_done($1)`, [oid]);
+  return oid;
+};
+
+const im0 = await impact();
+const dc0 = await doneCounts();
+check(
+  im0.total.food === dc0.food && im0.total.clothing === dc0.clothing && im0.total.free === dc0.free && im0.total.neighbours === dc0.neighbours,
+  `visitors see the totals of completed deals (${dc0.food} food, ${dc0.clothing} clothing, ${dc0.neighbours} neighbours)`,
+);
+check(
+  im0.month.food === dc0.food && im0.month.clothing === dc0.clothing && im0.month.neighbours === dc0.neighbours,
+  'every test deal happened this month, so the month matches the totals',
+);
+check(
+  im0.months.length === 6 && im0.months[5].month === thisMonth && im0.months[5].food === dc0.food && im0.months[5].clothing === dc0.clothing,
+  'six months of history, ending this month (Taipei time)',
+);
+const im0Text = JSON.stringify(im0);
+check(!im0Text.includes('邀請人') && !im0Text.includes(A) && !im0Text.includes('吐司'), 'it holds counts only: no names, ids or titles');
+check(new Date(im0.since) <= new Date(), 'and when the first deal was completed');
+
+const MO = await deal(K1, K2, '兒童襪子');
+await dealOn(K1, K2, (await one(K1, `select create_listing($1::jsonb) r`, [food({ title: '鳳梨酥一盒', mode: 'free', pricePoints: 0 })])).r.id);
+const im1 = await impact(K1);
+check(
+  im1.total.clothing === im0.total.clothing + 1 && im1.total.food === im0.total.food + 1 && im1.total.free === im0.total.free + 2 &&
+    im1.total.neighbours === im0.total.neighbours + 2,
+  'two new deals between two new members add two items, two free gifts and two neighbours',
+);
+const open1 = (await one(K3, `select request_listing($1, '', '') r`, [(await one(K1, `select create_listing($1::jsonb) r`, [cloth('還沒面交的帽子')])).r.id])).r;
+check(JSON.stringify((await impact()).total) === JSON.stringify(im1.total), 'deals not completed yet do not count');
+await as(K3, `select cancel_my_order($1, '不需要了')`, [open1]);
+check(JSON.stringify((await impact()).total) === JSON.stringify(im1.total), 'nor cancelled ones');
+
+await su(`update orders set completed_at = (date_trunc('month', now() at time zone 'Asia/Taipei') at time zone 'Asia/Taipei') - interval '1 day' where id = $1`, [MO]);
+const im2 = await impact();
+check(
+  im2.month.clothing === im1.month.clothing - 1 && im2.months[4].clothing === im1.months[4].clothing + 1 &&
+    JSON.stringify(im2.total) === JSON.stringify(im1.total),
+  "a deal from last month moves to last month's column and stays in the totals",
+);
+await su(`update orders set completed_at = (date_trunc('month', now() at time zone 'Asia/Taipei') at time zone 'Asia/Taipei') + interval '1 hour' where id = $1`, [MO]);
+check((await impact()).month.clothing === im1.month.clothing, "1 a.m. on the 1st in Taipei is this month, though it is still last month in UTC");
+
+const MW = await want(K3, '兒童雨傘');
+const LKA = (await one(K1, `select create_listing($1::jsonb) r`, [cloth('兒童雨傘（黃色）')])).r.id;
+const LKB = (await one(K1, `select create_listing($1::jsonb) r`, [cloth('兒童雨傘（藍色）')])).r.id;
+await as(K1, `select respond_want($1, $2)`, [MW, LKA]);
+await as(K1, `select respond_want($1, $2)`, [MW, LKB]);
+const wf0 = (await impact()).wantsFound;
+await dealOn(K1, K2, LKB);
+check((await impact()).wantsFound === wf0, 'an answer given to someone else does not fulfil the want');
+await dealOn(K1, K3, LKA);
+check((await impact()).wantsFound === wf0 + 1, 'an answer completed with the member who wanted it does');
+check((await err(K1, `select private.add_ledger($1, 'adjust', 1, 'x')`, [K1]))?.includes('permission denied'), 'the private helpers stay closed after migration 11');
+check((await err(null, `select complete_signup('anon')`))?.includes('permission denied'), 'visitors still cannot call other functions');
+
+const sum =(await su(`select sum(amount)::int s from ledger where type in ('signup_bonus','reward','adjust')`))[0].s;
 const fees = (await su(`select -sum(amount)::int s from ledger where type = 'fee'`))[0].s;
 const circ = (await su(`select sum(amount)::int s from ledger`))[0].s;
 const held = (await su(`select coalesce(sum(points),0)::int s from orders where mode='points' and status in ('requested','accepted','disputed')`))[0].s;

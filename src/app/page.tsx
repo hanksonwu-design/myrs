@@ -12,6 +12,7 @@ import type { Category, Mode } from '@/lib/types';
 import { ListingCard } from '@/components/ListingVisuals';
 import { WANT_COLOR, WantCard } from '@/components/WantVisuals';
 import { Announcement } from '@/components/Announcement';
+import { ImpactStrip } from '@/components/Impact';
 import { MapView } from '@/components/map/MapView';
 import { Empty } from '@/components/ui';
 import { useMyPosition } from '@/components/hooks';
@@ -151,6 +152,7 @@ export default function NearbyPage() {
           </div>
         </section>
       )}
+      <ImpactStrip d={d} />
 
       {/* Filters */}
       <div className="sticky top-14 z-[1000] -mx-4 mb-3 space-y-2 bg-[#f6f8f7]/95 px-4 pb-2 pt-1 backdrop-blur">

@@ -32,9 +32,11 @@ import {
 import { createSeed, DB_VERSION, seedWants } from './seed';
 import { fuzzLocation } from './geo';
 import { DAY, HOUR, ymdLocal } from './format';
+import { communityImpactOf } from './impact';
 import type {
   AdminLevel,
   Category,
+  CommunityImpact,
   DB,
   Invite,
   LatLng,
@@ -1483,6 +1485,12 @@ const localActions = {
       logAdmin(d, a, `發布全站公告：${v}（${until === null ? '沒有結束時間' : `到 ${formatUntil(until)}`}）`);
       return ok(null);
     });
+  },
+
+  /** Counts for the impact board; read only. */
+  communityImpact(): Result<CommunityImpact> {
+    const d = ensure();
+    return ok(communityImpactOf(d, nowOf(d)));
   },
 
   // The demo sends no mail, so there is nothing to show or resend.

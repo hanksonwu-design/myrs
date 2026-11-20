@@ -25,6 +25,7 @@ import { Avatar, Loading, Modal, ModeBadge, Stars } from '@/components/ui';
 import { useMyPosition, useRequireLogin } from '@/components/hooks';
 import { TrustBadge } from '@/components/TrustBadge';
 import { InviteCard } from '@/components/InviteCard';
+import { MyImpact } from '@/components/Impact';
 import { useToast } from '@/components/Providers';
 import { IS_REMOTE } from '@/lib/backend';
 import { listingPath, wantPath } from '@/lib/links';
@@ -126,6 +127,8 @@ export default function MePage() {
           </div>
         </div>
       </section>
+
+      <MyImpact d={d} user={user} />
 
       <InviteCard d={d} user={user} />
 
