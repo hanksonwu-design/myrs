@@ -13,6 +13,7 @@ import {
   MapPin,
   Navigation,
   Package,
+  PackageSearch,
   Pencil,
   Store,
   TriangleAlert,
@@ -30,8 +31,9 @@ import {
   ratingOf,
   useDB,
   userById,
+  wantById,
 } from '@/lib/store';
-import { CATEGORIES, LISTING_STATUS_LABEL, ORDER_STATUS_LABEL } from '@/lib/rules';
+import { CATEGORIES, LISTING_STATUS_LABEL, ORDER_STATUS_LABEL, wantOpen } from '@/lib/rules';
 import { distanceKm, publicLocationOf } from '@/lib/geo';
 import { directionsUrl } from '@/lib/geocode';
 import type { LatLng } from '@/lib/types';
@@ -47,7 +49,7 @@ import { LocationPicker } from '@/components/LocationPicker';
 import { TrustBadge } from '@/components/TrustBadge';
 import { useMyPosition } from '@/components/hooks';
 import { useToast } from '@/components/Providers';
-import { chatPath, listingPath, userPath } from '@/lib/links';
+import { chatPath, listingPath, userPath, wantPath } from '@/lib/links';
 
 function ListingPage() {
   const id = useSearchParams().get('id') ?? '';
@@ -79,6 +81,9 @@ function ListingPage() {
   }
   const rating = ratingOf(d, l.ownerId);
   const now = nowOf(d);
+  // The want (徵求) this listing answers, while it is up, or for the two people involved.
+  const want = l.wantId ? wantById(d, l.wantId) : null;
+  const answering = want && (wantOpen(want, now) || want.userId === me?.id || l.ownerId === me?.id) ? want : null;
   const isOwner = me?.id === l.ownerId;
   const publicLoc = publicLocationOf(l);
   const myOrder = me
@@ -174,6 +179,23 @@ function ListingPage() {
         {/* Info */}
         <div className="space-y-4">
           <div>
+            {answering && (
+              <Link
+                href={wantPath(answering.id)}
+                className="mb-3 flex items-start gap-2 rounded-2xl border border-violet-200 bg-violet-50 p-3 text-sm text-violet-900 hover:bg-violet-100"
+              >
+                <PackageSearch className="mt-0.5 size-4 shrink-0" />
+                {answering.userId === me?.id ? (
+                  <span>
+                    這是回應你的徵求「<b>{answering.title}</b>」的刊登。喜歡的話，按下方的「索取」。
+                  </span>
+                ) : (
+                  <span>
+                    回應 {userById(d, answering.userId)?.name ?? '會員'} 的徵求「<b>{answering.title}</b>」
+                  </span>
+                )}
+              </Link>
+            )}
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <ModeBadge listing={l} large />
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">

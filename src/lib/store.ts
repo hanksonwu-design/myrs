@@ -13,8 +13,21 @@
 import { useSyncExternalStore } from 'react';
 import { IS_REMOTE } from './backend';
 import { remoteActions, remoteSnapshot, startRemote } from './remote';
-import { calcFee, DEFAULT_SETTINGS, DEFAULT_SITE, findBannedWords, PHONE_RE, settingsChanges } from './rules';
-import { createSeed, DB_VERSION } from './seed';
+import {
+  calcFee,
+  DEFAULT_SETTINGS,
+  DEFAULT_SITE,
+  findBannedWords,
+  PHONE_RE,
+  settingsChanges,
+  WANT_DAILY_MAX,
+  WANT_DAYS,
+  WANT_MAX_ANSWERS,
+  WANT_MAX_OPEN,
+  wantOpen,
+} from './rules';
+import { createSeed, DB_VERSION, seedWants } from './seed';
+import { fuzzLocation } from './geo';
 import { DAY, HOUR, ymdLocal } from './format';
 import type {
   AdminLevel,
@@ -27,10 +40,12 @@ import type {
   Mode,
   Order,
   OrderStatus,
+  Report,
   Review,
   SavedSearch,
   Settings,
   User,
+  Want,
 } from './types';
 import { activeSuspension, formatUntil, hasLevel, LEVEL_LABEL, levelError, levelOf, suspensionNote } from './staff';
 
@@ -66,6 +81,7 @@ function load(): DB {
           favorites: parsed.favorites ?? [],
           savedSearches: parsed.savedSearches ?? [],
           suspensions: parsed.suspensions ?? [],
+          wants: parsed.wants ?? seedWants(Date.now()),
           settings: { ...DEFAULT_SETTINGS, ...parsed.settings },
           site: { ...DEFAULT_SITE, ...parsed.site },
         };
@@ -154,6 +170,7 @@ export function currentUser(d: DB): User | null {
 export const userById = (d: DB, id: string | null) => d.users.find((u) => u.id === id) ?? null;
 export const listingById = (d: DB, id: string) => d.listings.find((l) => l.id === id) ?? null;
 export const orderById = (d: DB, id: string) => d.orders.find((o) => o.id === id) ?? null;
+export const wantById = (d: DB, id: string) => d.wants.find((w) => w.id === id) ?? null;
 
 export function balanceOf(d: DB, userId: string): number {
   return d.ledger.filter((e) => e.userId === userId).reduce((s, e) => s + e.amount, 0);
@@ -537,6 +554,25 @@ export function validateListing(input: NewListingInput, today: string): string |
   return null;
 }
 
+export interface NewWantInput {
+  category: Category;
+  title: string;
+  description: string;
+  /** Rough point; the server keeps only a fuzzed one. */
+  location: LatLng;
+  areaLabel: string;
+}
+
+export function validateWant(input: NewWantInput): string | null {
+  const title = input.title.trim();
+  if (title.length < 2) return '想要的東西至少寫 2 個字';
+  if (title.length > 30) return '想要的東西最多 30 個字';
+  if (input.description.trim().length > 200) return '說明最多 200 個字';
+  if (!input.areaLabel.trim()) return '請填寫大概的地點，例如「捷運大安站附近」';
+  if (input.areaLabel.trim().length > 40) return '地點名稱最多 40 個字';
+  return null;
+}
+
 export interface SavedSearchInput {
   keyword: string;
   category: Category | null;
@@ -784,6 +820,79 @@ const localActions = {
     });
   },
 
+  // ---- wants (徵求)
+  createWant(input: NewWantInput): Result<string> {
+    return mutate((d) => {
+      const u = requireUser(d);
+      if ('error' in u) return fail(u.error);
+      const err = validateWant(input);
+      if (err) return fail(err);
+      const title = input.title.trim();
+      const description = input.description.trim();
+      const bad = findBannedWords(`${title} ${description}`, d.site.bannedWords);
+      if (bad.length) return fail(`徵求內容包含「${bad.join('、')}」，這類物品不能在 Myrs 交換`);
+      const now = nowOf(d);
+      const mine = d.wants.filter((w) => w.userId === u.id);
+      if (mine.filter((w) => (w.status === 'open' || w.status === 'hidden') && w.expiresAt > now).length >= WANT_MAX_OPEN) {
+        return fail(`同時最多 ${WANT_MAX_OPEN} 則徵求，請先結束已經找到或不需要的`);
+      }
+      if (mine.filter((w) => w.createdAt > now - DAY).length >= WANT_DAILY_MAX) {
+        return fail(`每天最多發 ${WANT_DAILY_MAX} 則徵求，明天再試`);
+      }
+      const id = uid('w');
+      d.wants.push({
+        id,
+        userId: u.id,
+        category: input.category,
+        title,
+        description,
+        location: fuzzLocation(input.location, id),
+        areaLabel: input.areaLabel.trim(),
+        status: 'open',
+        createdAt: now,
+        expiresAt: now + WANT_DAYS * DAY,
+        closedAt: null,
+      });
+      return ok(id);
+    });
+  },
+
+  closeWant(wantId: string): Result {
+    return mutate((d) => {
+      const u = requireUser(d);
+      if ('error' in u) return fail(u.error);
+      const w = wantById(d, wantId);
+      if (!w || w.userId !== u.id) return fail('找不到這則徵求');
+      const now = nowOf(d);
+      if ((w.status !== 'open' && w.status !== 'hidden') || w.expiresAt <= now) return fail('這則徵求已經結束了');
+      w.status = 'closed';
+      w.closedAt = now;
+      return ok(null);
+    });
+  },
+
+  /** Links one of my listings to a want; Supabase mode mails the asker once it is live. */
+  respondWant(wantId: string, listingId: string): Result {
+    return mutate((d) => {
+      const u = requireUser(d);
+      if ('error' in u) return fail(u.error);
+      const w = wantById(d, wantId);
+      if (!w || !wantOpen(w, nowOf(d)) || userById(d, w.userId)?.status !== 'active') return fail('這則徵求已經結束了');
+      if (w.userId === u.id) return fail('不能回應自己的徵求');
+      if (isBlockedBetween(d, u.id, w.userId)) return fail('你們之間有封鎖，無法回應');
+      const l = listingById(d, listingId);
+      if (!l || l.ownerId !== u.id) return fail('找不到這則刊登');
+      if (l.status !== 'active' && l.status !== 'pending_review') return fail('只有上架中的刊登可以回應徵求');
+      if (l.wantId === w.id) return fail('這則刊登已經回應過這則徵求了');
+      if (l.wantId) return fail('一則刊登只能回應一則徵求');
+      if (d.listings.filter((x) => x.wantId === w.id && x.ownerId === u.id).length >= WANT_MAX_ANSWERS) {
+        return fail(`同一則徵求最多回應 ${WANT_MAX_ANSWERS} 次`);
+      }
+      l.wantId = w.id;
+      return ok(null);
+    });
+  },
+
   // ---- orders
   requestListing(listingId: string, opts: { note: string; swapOffer: string }): Result<string> {
     return mutate((d) => {
@@ -1002,13 +1111,14 @@ const localActions = {
     });
   },
 
-  report(targetType: 'listing' | 'user', targetId: string, reason: string): Result<boolean> {
+  report(targetType: Report['targetType'], targetId: string, reason: string): Result<boolean> {
     return mutate((d) => {
       const u = requireUser(d);
       if ('error' in u) return fail(u.error);
       if (!reason.trim()) return fail('請選擇或填寫檢舉原因');
       if (targetType === 'user' && targetId === u.id) return fail('不能檢舉自己');
       if (targetType === 'listing' && listingById(d, targetId)?.ownerId === u.id) return fail('不能檢舉自己的刊登');
+      if (targetType === 'want' && wantById(d, targetId)?.userId === u.id) return fail('不能檢舉自己的徵求');
       if (d.reports.some((r) => r.targetId === targetId && r.reporterId === u.id && r.status === 'open')) {
         return fail('你已經檢舉過了，管理員會盡快處理');
       }
@@ -1022,18 +1132,21 @@ const localActions = {
         createdAt: nowOf(d),
         handledBy: null,
       });
-      let hidden = false;
-      if (targetType === 'listing') {
-        const reporters = new Set(
-          d.reports.filter((r) => r.targetId === targetId && r.status === 'open').map((r) => r.reporterId),
-        );
-        const l = listingById(d, targetId);
-        if (l && l.status === 'active' && reporters.size >= d.settings.reportHideThreshold) {
-          l.status = 'pending_review';
-          hidden = true;
-        }
+      const reporters = new Set(
+        d.reports.filter((r) => r.targetId === targetId && r.status === 'open').map((r) => r.reporterId),
+      );
+      if (reporters.size < d.settings.reportHideThreshold) return ok(false);
+      const l = targetType === 'listing' ? listingById(d, targetId) : null;
+      if (l && l.status === 'active') {
+        l.status = 'pending_review';
+        return ok(true);
       }
-      return ok(hidden);
+      const w = targetType === 'want' ? wantById(d, targetId) : null;
+      if (w && w.status === 'open') {
+        w.status = 'hidden';
+        return ok(true);
+      }
+      return ok(false);
     });
   },
 
@@ -1080,13 +1193,18 @@ const localActions = {
     });
   },
 
-  adminHandleReport(reportId: string, action: 'dismiss' | 'remove_listing' | 'suspend_user'): Result {
+  adminHandleReport(reportId: string, action: 'dismiss' | 'remove_listing' | 'remove_want' | 'suspend_user'): Result {
     return mutate((d) => {
       const a = requireLevel(d, 'moderator');
       if ('error' in a) return fail(a.error);
       const r = d.reports.find((x) => x.id === reportId);
       if (!r || r.status !== 'open') return fail('這筆檢舉已處理過');
-      const reportedUser = r.targetType === 'user' ? r.targetId : listingById(d, r.targetId)?.ownerId;
+      const reportedUser =
+        r.targetType === 'user'
+          ? r.targetId
+          : r.targetType === 'want'
+            ? wantById(d, r.targetId)?.userId
+            : listingById(d, r.targetId)?.ownerId;
       if (reportedUser === a.id) return fail('不能處理針對自己的檢舉，請由其他管理團隊成員處理');
       const close = (status: 'resolved' | 'dismissed') => {
         for (const x of d.reports) {
@@ -1100,6 +1218,8 @@ const localActions = {
         close('dismissed');
         const l = r.targetType === 'listing' ? listingById(d, r.targetId) : null;
         if (l && l.status === 'pending_review' && !l.flaggedWords.length) l.status = 'active';
+        const w = r.targetType === 'want' ? wantById(d, r.targetId) : null;
+        if (w && w.status === 'hidden') w.status = 'open';
         logAdmin(d, a, `駁回檢舉：${r.reason}`);
         return ok(null);
       }
@@ -1116,14 +1236,45 @@ const localActions = {
         logAdmin(d, a, `依檢舉下架刊登「${l.title}」`);
         return ok(null);
       }
+      if (action === 'remove_want') {
+        const w = r.targetType === 'want' ? wantById(d, r.targetId) : null;
+        if (!w) return fail('檢舉對象不是徵求');
+        w.status = 'removed';
+        w.closedAt = w.closedAt ?? nowOf(d);
+        close('resolved');
+        logAdmin(d, a, `依檢舉移除徵求「${w.title}」`);
+        return ok(null);
+      }
       if (!hasLevel(a, 'admin')) return fail('停權需要「管理員」以上的權限');
-      const targetUserId = r.targetType === 'user' ? r.targetId : listingById(d, r.targetId)?.ownerId;
-      const target = targetUserId ? userById(d, targetUserId) : null;
+      const target = reportedUser ? userById(d, reportedUser) : null;
       if (!target || target.status !== 'active') return fail('無法停權這個帳號');
       if (target.role === 'admin') return fail('不能停權管理團隊成員，請先由擁有者撤銷權限');
       suspendMember(d, a, target, '經檢舉確認違反使用規則', null);
       close('resolved');
       logAdmin(d, a, `依檢舉停權「${target.name}」`);
+      return ok(null);
+    });
+  },
+
+  adminRemoveWant(wantId: string, reason = ''): Result {
+    return mutate((d) => {
+      const a = requireLevel(d, 'moderator');
+      if ('error' in a) return fail(a.error);
+      const why = reason.trim() || '不符合使用規則';
+      if (why.length > 200) return fail('移除原因最多 200 個字');
+      const w = wantById(d, wantId);
+      if (!w) return fail('找不到這則徵求');
+      if (w.userId === a.id) return fail('這是你自己的徵求，請直接按「結束徵求」');
+      if (w.status === 'removed') return fail('這則徵求已經移除了');
+      w.status = 'removed';
+      w.closedAt = w.closedAt ?? nowOf(d);
+      for (const r of d.reports) {
+        if (r.targetId === w.id && r.status === 'open') {
+          r.status = 'resolved';
+          r.handledBy = a.id;
+        }
+      }
+      logAdmin(d, a, `移除徵求「${w.title}」（${why}）`);
       return ok(null);
     });
   },

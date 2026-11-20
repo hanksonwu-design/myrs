@@ -11,7 +11,7 @@ export default function AboutPage() {
   const d = useDB()!;
   const s = d.settings;
   const steps = [
-    { icon: <MapPin className="size-5" />, title: '看附近', text: '打開就看到身邊 1～10 公里內的即期食品和二手衣物，地圖上的位置是模糊範圍。' },
+    { icon: <MapPin className="size-5" />, title: '看附近', text: '打開就看到身邊 1～10 公里內的即期食品和二手衣物，地圖上的位置是模糊範圍。找不到想要的，可以發「徵求」，附近有的人會刊登給你。' },
     { icon: <HandHeart className="size-5" />, title: '送出索取', text: '免費、點數或以物易物三種方式；點數會先凍結，不會直接扣走。' },
     { icon: <MessageCircle className="size-5" />, title: '接受後聊天', text: '提供者接受後才開聊天室，並顯示精確面交地點，約好時間就出門。' },
     { icon: <ShieldCheck className="size-5" />, title: '雙方確認完成', text: `兩邊都按「面交完成」才算成交；一方確認後 ${s.autoCompleteHours} 小時對方沒回應就自動完成${s.acceptTimeoutDays > 0 ? `，接受後 ${s.acceptTimeoutDays} 天都沒人確認則自動取消並退點` : ''}。${IS_REMOTE ? '重要進度會寄 Email 通知你。' : ''}` },

@@ -27,8 +27,9 @@ import type {
   Settings,
   SiteInfo,
   User,
+  Want,
 } from './types';
-import type { NewListingInput, Result, SavedSearchInput } from './store';
+import type { NewListingInput, NewWantInput, Result, SavedSearchInput } from './store';
 
 const ok = <T,>(value: T): Result<T> => ({ ok: true, value });
 const fail = (error: string): { ok: false; error: string } => ({ ok: false, error });
@@ -118,9 +119,24 @@ function toListing(r: Row, exact: Map<string, LatLng>): Listing {
     timeSlots: str(r.time_slots),
     status: r.status as Listing['status'],
     flaggedWords: (r.flagged_words as string[] | null) ?? [],
+    wantId: (r.want_id as string | null) ?? null,
     createdAt: msReq(r.created_at),
   };
 }
+
+const toWant = (r: Row): Want => ({
+  id: str(r.id),
+  userId: str(r.user_id),
+  category: r.category as Want['category'],
+  title: str(r.title),
+  description: str(r.description),
+  location: { lat: num(r.lat), lng: num(r.lng) },
+  areaLabel: str(r.area_label),
+  status: r.status as Want['status'],
+  createdAt: msReq(r.created_at),
+  expiresAt: msReq(r.expires_at),
+  closedAt: ms(r.closed_at),
+});
 
 function toOrder(r: Row): Order {
   return {
@@ -232,6 +248,15 @@ async function selectAll(table: string, orderBy: string): Promise<Row[]> {
   }
 }
 
+/** A table from a newer migration: empty until it is applied, instead of breaking the site. */
+async function selectOptional(table: string, orderBy: string): Promise<Row[]> {
+  try {
+    return await selectAll(table, orderBy);
+  } catch {
+    return [];
+  }
+}
+
 async function fetchSnapshot(): Promise<DB> {
   const sb = supabase();
   const {
@@ -240,7 +265,7 @@ async function fetchSnapshot(): Promise<DB> {
   const uid = session?.user.id ?? null;
   const signedIn = (table: string, orderBy: string) => (uid ? selectAll(table, orderBy) : Promise.resolve([]));
 
-  const [settings, profiles, listings, reviews, secrets, blocks, orders, ledger, messages, reports, adminLog, reads, favs, searches, susp] =
+  const [settings, profiles, listings, reviews, secrets, blocks, orders, ledger, messages, reports, adminLog, reads, favs, searches, susp, wantRows] =
     await Promise.all([
       selectAll('settings', 'id'),
       selectAll('profiles', 'created_at'),
@@ -257,6 +282,7 @@ async function fetchSnapshot(): Promise<DB> {
       signedIn('favorites', 'created_at'),
       signedIn('saved_searches', 'created_at'),
       signedIn('suspensions', 'created_at'),
+      selectOptional('wants', 'created_at'),
     ]);
 
   const exact = new Map(secrets.map((r) => [str(r.listing_id), { lat: num(r.lat), lng: num(r.lng) }]));
@@ -312,6 +338,7 @@ async function fetchSnapshot(): Promise<DB> {
     sessionUserId: me && me.status === 'active' ? me.id : null,
     users,
     listings: listings.map((r) => toListing(r, exact)),
+    wants: wantRows.map(toWant),
     orders: orders.map(toOrder),
     ledger: ledger.map(toLedger),
     messages: msgs,
@@ -353,6 +380,7 @@ function emptySnapshot(error: string): DB {
     sessionUserId: null,
     users: [],
     listings: [],
+    wants: [],
     orders: [],
     ledger: [],
     messages: [],
@@ -444,6 +472,7 @@ const REALTIME_TABLES = [
   'favorites',
   'saved_searches',
   'suspensions',
+  'wants',
 ];
 
 let channel: RealtimeChannel | null = null;
@@ -632,13 +661,28 @@ export const remoteActions = {
   submitReview: (orderId: string, stars: number, comment: string) =>
     rpc<null>('submit_review', { p_order: orderId, p_stars: stars, p_comment: comment }),
 
-  report: (targetType: 'listing' | 'user', targetId: string, reason: string) =>
+  createWant: (input: NewWantInput) =>
+    rpc<string>('create_want', {
+      p_category: input.category,
+      p_title: input.title,
+      p_description: input.description,
+      p_lat: input.location.lat,
+      p_lng: input.location.lng,
+      p_area: input.areaLabel,
+    }),
+  closeWant: (wantId: string) => rpc<null>('close_want', { p_want: wantId }),
+  respondWant: (wantId: string, listingId: string) =>
+    rpc<null>('respond_want', { p_want: wantId, p_listing: listingId }),
+
+  report: (targetType: Report['targetType'], targetId: string, reason: string) =>
     rpc<boolean>('report', { p_target_type: targetType, p_target_id: targetId, p_reason: reason }),
 
   adminSetListingStatus: (listingId: string, status: 'active' | 'removed', reason = '') =>
     rpc<null>('admin_set_listing_status', { p_listing: listingId, p_status: status, p_reason: reason }),
-  adminHandleReport: (reportId: string, action: 'dismiss' | 'remove_listing' | 'suspend_user') =>
+  adminHandleReport: (reportId: string, action: 'dismiss' | 'remove_listing' | 'remove_want' | 'suspend_user') =>
     rpc<null>('admin_handle_report', { p_report: reportId, p_action: action }),
+  adminRemoveWant: (wantId: string, reason = '') =>
+    rpc<null>('admin_remove_want', { p_want: wantId, p_reason: reason }),
   adminResolveDispute: (orderId: string, outcome: 'complete' | 'refund', note: string) =>
     rpc<null>('admin_resolve_dispute', { p_order: orderId, p_outcome: outcome, p_note: note }),
   adminSetUserStatus: (userId: string, status: 'active' | 'suspended', reason = '', days: number | null = null) =>

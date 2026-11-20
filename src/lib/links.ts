@@ -7,6 +7,7 @@ const withId = (path: string, id: string | undefined) => `${path}?id=${encodeURI
 export const listingPath = (id: string | undefined) => withId('/listings/view', id);
 export const chatPath = (orderId: string | undefined) => withId('/messages/view', orderId);
 export const userPath = (id: string | undefined) => withId('/users/view', id);
+export const wantPath = (id: string | undefined) => withId('/wants/view', id);
 
 /** Set at build time when the site lives in a subfolder (e.g. /myrs on GitHub Pages). */
 export const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? '';

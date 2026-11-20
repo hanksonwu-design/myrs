@@ -7,6 +7,8 @@ import { currentUser, nowOf, ratingOf, reviewPublished, useDB, userById } from '
 import { distanceKm, PILOT_CENTER, publicLocationOf } from '@/lib/geo';
 import { formatDate, timeAgo } from '@/lib/format';
 import { ListingCard } from '@/components/ListingVisuals';
+import { WantCard } from '@/components/WantVisuals';
+import { wantOpen } from '@/lib/rules';
 import { Avatar, NotFound, Stars } from '@/components/ui';
 import { BlockButton, ReportButton } from '@/components/ReportBlock';
 import { TRUST_HELP, TrustBadge } from '@/components/TrustBadge';
@@ -20,6 +22,7 @@ function UserPage() {
   const now = nowOf(d);
   const rating = ratingOf(d, u.id);
   const listings = d.listings.filter((l) => l.ownerId === u.id && l.status === 'active');
+  const wants = d.wants.filter((w) => w.userId === u.id && wantOpen(w, nowOf(d))).sort((a, b) => b.createdAt - a.createdAt);
   const reviews = d.reviews.filter((r) => r.revieweeId === u.id && reviewPublished(d, r));
 
   return (
@@ -74,6 +77,17 @@ function UserPage() {
           <p className="text-sm text-slate-500">目前沒有刊登。</p>
         )}
       </section>
+
+      {wants.length > 0 && (
+        <section>
+          <h2 className="mb-2 font-bold">徵求中（{wants.length}）</h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {wants.map((w) => (
+              <WantCard key={w.id} d={d} want={w} distance={null} />
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="card p-5">
         <h2 className="mb-3 font-bold">評價</h2>

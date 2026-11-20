@@ -69,6 +69,27 @@ export interface Listing {
   status: ListingStatus;
   flaggedWords: string[];
   createdAt: number;
+  /** The want (徵求) this listing answers, if any. */
+  wantId?: string | null;
+}
+
+/** open until expiresAt; hidden while enough reports wait for staff. */
+export type WantStatus = 'open' | 'closed' | 'hidden' | 'removed';
+
+/** A wanted post (徵求): something a member needs, near a rough point. */
+export interface Want {
+  id: string;
+  userId: string;
+  category: Category;
+  title: string;
+  description: string;
+  /** Public, fuzzed point; the exact one is never stored. */
+  location: LatLng;
+  areaLabel: string;
+  status: WantStatus;
+  createdAt: number;
+  expiresAt: number;
+  closedAt: number | null;
 }
 
 export interface Order {
@@ -129,7 +150,7 @@ export interface Review {
 
 export interface Report {
   id: string;
-  targetType: 'listing' | 'user';
+  targetType: 'listing' | 'user' | 'want';
   targetId: string;
   reporterId: string; // 'system' for automatic flags
   reason: string;
@@ -232,6 +253,7 @@ export interface DB {
   sessionUserId: string | null;
   users: User[];
   listings: Listing[];
+  wants: Want[];
   orders: Order[];
   ledger: LedgerEntry[];
   messages: Message[];

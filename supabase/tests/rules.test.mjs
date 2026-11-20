@@ -27,6 +27,7 @@ await db.exec(migration('20261119000004_review_fixes.sql'));
 await db.exec(migration('20261119000006_improvements.sql'));
 await db.exec(migration('20261120000007_admin_levels.sql'));
 await db.exec(migration('20261120000008_admin_tools.sql'));
+await db.exec(migration('20261120000009_wants.sql'));
 console.log('migrations applied');
 
 let failures = 0;
@@ -690,6 +691,137 @@ check(
 );
 check((await err(ADM, `select admin_update_settings('{"feeRate": 0.08}')`))?.includes('沒有變更'), 'an unchanged save is refused');
 await as(ADM, `select admin_update_settings($1::jsonb)`, [JSON.stringify({ feeRate: s0.fee_rate, minFee: s0.min_fee })]);
+
+console.log('wanted posts (migration 9)');
+const W1 = '00000000-0000-0000-0000-0000000003c1';
+const W2 = '00000000-0000-0000-0000-0000000003c2';
+const W3 = '00000000-0000-0000-0000-0000000003c3';
+const W4 = '00000000-0000-0000-0000-0000000003c4';
+const W5 = '00000000-0000-0000-0000-0000000003c5';
+await su(`insert into auth.users values
+  ('${W1}', '886955500001', null), ('${W2}', '886955500002', null), ('${W3}', '886955500003', null),
+  ('${W4}', '886955500004', null), ('${W5}', '886955500005', null)`);
+for (const [u, n] of [[W1, '徵求者'], [W2, '回應者'], [W3, '路人'], [W4, '路人二'], [W5, '路人三']]) {
+  await one(u, `select complete_signup($1)`, [n]);
+}
+const wantArgs = (title, x = {}) => [x.category ?? 'clothing', title, x.description ?? '', x.lat ?? 25.03, 121.53, x.area ?? '大安站'];
+const want = async (u, title, x) => (await one(u, `select create_want($1, $2, $3, $4, $5, $6) r`, wantArgs(title, x))).r;
+const wantErr = (u, title, x) => err(u, `select create_want($1, $2, $3, $4, $5, $6)`, wantArgs(title, x));
+const wstat = async (id) => (await su(`select status from wants where id = $1`, [id]))[0].status;
+const seesWant = async (u, id) => (await as(u, `select id from wants where id = $1`, [id])).length === 1;
+
+check((await wantErr(W1, '酒杯一組'))?.includes('「酒」'), 'wants with banned words are refused');
+check((await wantErr(W1, '外'))?.includes('至少'), 'a want needs at least 2 characters');
+check((await wantErr(W1, '外套', { area: ' ' }))?.includes('地點'), 'and a rough area');
+check((await wantErr(W1, '外套', { category: 'toys' }))?.includes('分類'), 'and a known category');
+check((await wantErr(W1, '外套', { lat: 91 }))?.includes('位置'), 'and a valid point');
+check((await err(null, `select create_want('clothing', '外套', '', 25.03, 121.53, '大安站')`))?.includes('permission denied'), 'anon cannot post wants');
+const WA = await want(W1, '130cm 男童外套', { description: '冬天上學穿' });
+const wr = (await su(`select * from wants where id = $1`, [WA]))[0];
+const wmoved = Math.hypot((wr.lat - 25.03) * 111320, (wr.lng - 121.53) * 111320 * Math.cos((25.03 * Math.PI) / 180));
+check(wr.status === 'open' && wmoved >= 59 && wmoved <= 181, `a want is open at a fuzzed point (${wmoved.toFixed(0)} m)`);
+check(Math.abs((new Date(wr.expires_at) - new Date(wr.created_at)) / 86400000 - 14) < 0.01, 'and lasts 14 days');
+check((await seesWant(null, WA)) && (await seesWant(W3, WA)), 'everyone sees open wants');
+check(
+  (await err(W1, `insert into wants (user_id, category, title, lat, lng, area_label, expires_at) values ($1, 'food', '直接寫入', 0, 0, 'x', now())`, [W1]))?.includes('permission denied'),
+  'wants cannot be written directly',
+);
+const WB = await want(W1, '雨衣');
+const WC = await want(W1, '毛線圍巾');
+check((await wantErr(W1, '手套'))?.includes('最多 3 則'), 'three open wants at a time');
+
+// Answering with a listing.
+const LW = (await one(W2, `select create_listing($1::jsonb) r`, [cloth('男童外套 130 公分')])).r.id;
+const LW1 = (await one(W1, `select create_listing($1::jsonb) r`, [cloth('自己的外套')])).r.id;
+check((await err(W1, `select respond_want($1, $2)`, [WA, LW1]))?.includes('自己的徵求'), 'members cannot answer their own want');
+check((await err(W3, `select respond_want($1, $2)`, [WA, LW]))?.includes('找不到這則刊登'), "or answer with someone else's listing");
+await su(`delete from notifications`);
+await as(W2, `select respond_want($1, $2)`, [WA, LW]);
+const m1 = await mail(W1);
+check(
+  m1.length === 1 && m1[0].subject === '有人回應你的徵求「130cm 男童外套」' && m1[0].body.includes('男童外套 130 公分') &&
+    m1[0].body.includes('回應者') && m1[0].link === `/listings/view?id=${LW}`,
+  'the asker is mailed with a link to the listing',
+);
+check((await one(null, `select want_id from listings where id = $1`, [LW])).want_id === WA, 'the listing shows which want it answers');
+check((await err(W2, `select respond_want($1, $2)`, [WA, LW]))?.includes('已經回應過'), 'a listing answers a want once');
+check((await err(W2, `select respond_want($1, $2)`, [WB, LW]))?.includes('只能回應一則'), 'and only one want');
+await as(ADM, `select admin_set_listing_status($1, 'removed', '測試')`, [LW]);
+check((await mail(W1)).length === 1, 'later changes to the listing do not mail again');
+
+// A flagged answer mails only once it is approved.
+const LF = (await one(W2, `select create_listing($1::jsonb) r`, [cloth('自製毛線圍巾')])).r;
+check(LF.status === 'pending_review', 'a flagged answer waits for review');
+await as(W2, `select respond_want($1, $2)`, [WC, LF.id]);
+check((await mail(W1)).length === 1, 'with no mail yet');
+await as(ADM, `select admin_set_listing_status($1, 'active')`, [LF.id]);
+check((await mail(W1)).some((m) => m.subject === '有人回應你的徵求「毛線圍巾」'), 'the mail goes out on approval');
+
+// At most three answers from one member to one want.
+for (const t of ['雨衣 A', '雨衣 B', '雨衣 C']) {
+  const id = (await one(W3, `select create_listing($1::jsonb) r`, [cloth(t)])).r.id;
+  await as(W3, `select respond_want($1, $2)`, [WB, id]);
+}
+const L4th = (await one(W3, `select create_listing($1::jsonb) r`, [cloth('雨衣 D')])).r.id;
+check((await err(W3, `select respond_want($1, $2)`, [WB, L4th]))?.includes('最多回應 3 次'), 'one member answers a want at most 3 times');
+
+// Blocking, suspension, closing and expiry.
+await one(W4, `select toggle_block($1)`, [W1]);
+check(!(await seesWant(W4, WA)), 'blocked members do not see each other’s wants');
+const LB4 = (await one(W4, `select create_listing($1::jsonb) r`, [cloth('外套 B')])).r.id;
+check((await err(W4, `select respond_want($1, $2)`, [WA, LB4]))?.includes('封鎖'), 'or answer them');
+await one(W4, `select toggle_block($1)`, [W1]);
+await as(ADM, `select admin_set_user_status($1, 'suspended', '測試停權', 1)`, [W1]);
+check(!(await seesWant(W3, WA)) && (await seesWant(ADM, WA)), "a suspended member's wants are hidden, except from staff");
+check((await err(W4, `select respond_want($1, $2)`, [WA, LB4]))?.includes('已經結束'), 'and cannot be answered');
+await as(ADM, `select admin_set_user_status($1, 'active')`, [W1]);
+check(await seesWant(W3, WA), 'they come back when the suspension is lifted');
+check((await err(W3, `select close_want($1)`, [WA]))?.includes('找不到'), "members cannot close others' wants");
+await as(W1, `select close_want($1)`, [WB]);
+check((await wstat(WB)) === 'closed' && !(await seesWant(W3, WB)) && (await seesWant(W1, WB)), 'a closed want is hidden from others');
+check((await err(W1, `select close_want($1)`, [WB]))?.includes('已經結束'), 'and cannot be closed twice');
+check(!!(await want(W1, '手套')), 'closing frees a slot');
+await su(`update wants set expires_at = now() - interval '1 minute' where id = $1`, [WC]);
+check(!(await seesWant(W3, WC)), 'an expired want is hidden');
+check((await err(W2, `select respond_want($1, $2)`, [WC, LW]))?.includes('已經結束'), 'and cannot be answered');
+check(!!(await want(W1, '帽子')), 'and does not count toward the limit');
+const WG = (await su(`select id from wants where user_id = $1 and title = '手套'`, [W1]))[0].id;
+await as(W1, `select close_want($1)`, [WG]);
+check((await wantErr(W1, '襪子'))?.includes('每天最多'), 'at most 5 wants a day');
+
+// Reports and staff.
+const WR = await want(W5, '可疑的徵求');
+check((await err(W5, `select report('want', $1, '測試')`, [WR]))?.includes('自己的徵求'), 'members cannot report their own want');
+const thr = (await su(`select report_hide_threshold t from settings`))[0].t;
+const reporters = [W1, W2, W3, W4, A, B, D].slice(0, thr);
+let hid = false;
+for (const u of reporters) hid = (await one(u, `select report('want', $1, '疑似詐騙') r`, [WR])).r;
+check(hid && (await wstat(WR)) === 'hidden' && !(await seesWant(W3, WR)), `${thr} reporters hide a want until staff look`);
+const wrp = (await su(`select id from reports where target_id = $1 limit 1`, [WR]))[0].id;
+check((await err(M1, `select admin_handle_report($1, 'remove_listing')`, [wrp]))?.includes('不是刊登'), 'a want is not removed as a listing');
+await as(M1, `select admin_handle_report($1, 'dismiss')`, [wrp]);
+check((await wstat(WR)) === 'open' && (await seesWant(W3, WR)), 'dismissing the reports puts it back');
+await one(W1, `select report('want', $1, '還是很可疑') r`, [WR]);
+const wrp2 = (await su(`select id from reports where target_id = $1 and status = 'open'`, [WR]))[0].id;
+await su(`delete from notifications`);
+await as(M1, `select admin_handle_report($1, 'remove_want')`, [wrp2]);
+const m5 = await mail(W5);
+check(
+  (await wstat(WR)) === 'removed' && m5.length === 1 && m5[0].subject === '你的徵求「可疑的徵求」已被移除' && !m5[0].body.includes('還是很可疑'),
+  'staff remove a reported want; the member is told, without the report text',
+);
+check((await lastLog('依檢舉移除徵求')).includes('可疑的徵求'), 'and it is logged');
+const WS = await want(W5, '另一則徵求');
+check((await err(W5, `select admin_remove_want($1, 'x')`, [WS]))?.includes('權限') , 'members cannot remove wants');
+const WM1 = await want(M1, '自己的徵求');
+check((await err(M1, `select admin_remove_want($1, 'x')`, [WM1]))?.includes('結束徵求'), 'staff close their own wants instead of removing them');
+await su(`delete from notifications`);
+await as(M1, `select admin_remove_want($1, '  重複張貼 ')`, [WS]);
+const m6 = await mail(W5);
+check((await wstat(WS)) === 'removed' && m6[0].body.includes('原因：重複張貼'), 'staff remove any want with a reason');
+check((await lastLog('移除徵求')).includes('重複張貼'), 'which is logged');
+check((await err(M1, `select admin_remove_want($1, 'x')`, [WS]))?.includes('已經移除'), 'a want is removed once');
+check(!(await seesWant(W3, WS)) && (await seesWant(W5, WS)), 'a removed want stays visible only to its owner and staff');
 
 const sum = (await su(`select sum(amount)::int s from ledger where type in ('signup_bonus','reward','adjust')`))[0].s;
 const fees = (await su(`select -sum(amount)::int s from ledger where type = 'fee'`))[0].s;

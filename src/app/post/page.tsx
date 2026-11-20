@@ -1,11 +1,12 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { Suspense, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { Camera, Check, ChevronLeft, ImagePlus, Shirt, Utensils, X } from 'lucide-react';
-import { actions, nowOf, useDB, validateListing, type NewListingInput } from '@/lib/store';
-import { calcFee, CATEGORIES, findBannedWords, MODE_LABEL, STORAGE_OPTIONS } from '@/lib/rules';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Camera, Check, ChevronLeft, ImagePlus, PackageSearch, Shirt, Utensils, X } from 'lucide-react';
+import { actions, nowOf, useDB, userById, validateListing, wantById, type NewListingInput } from '@/lib/store';
+import { calcFee, CATEGORIES, findBannedWords, guessSub, MODE_LABEL, STORAGE_OPTIONS, wantOpen } from '@/lib/rules';
+import { IS_REMOTE } from '@/lib/backend';
 import { ymdLocal } from '@/lib/format';
 import { compressImage } from '@/lib/image';
 import type { Category, LatLng, Listing, Mode } from '@/lib/types';
@@ -14,13 +15,16 @@ import { ListingCard } from '@/components/ListingVisuals';
 import { Loading } from '@/components/ui';
 import { useMyPosition, useRequireLogin } from '@/components/hooks';
 import { useToast } from '@/components/Providers';
-import { listingPath } from '@/lib/links';
+import { listingPath, wantPath } from '@/lib/links';
 
 const STEPS = ['照片', '類別', '內容', '交易方式', '地點時段', '預覽'];
 
-export default function PostPage() {
+function PostForm() {
   const d = useDB()!;
   const user = useRequireLogin(d);
+  // /post?want=<id>: a listing that answers a want (徵求), started from the want's page.
+  const wantParam = useSearchParams().get('want') ?? '';
+  const want0 = wantParam ? wantById(d, wantParam) : null;
   const router = useRouter();
   const toast = useToast();
   const pos = useMyPosition();
@@ -30,9 +34,9 @@ export default function PostPage() {
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState('');
   const [f, setF] = useState<Omit<NewListingInput, 'location'> & { location: LatLng | null }>({
-    category: 'food',
-    sub: CATEGORIES.food.subs[0],
-    title: '',
+    category: want0?.category ?? 'food',
+    sub: want0 ? guessSub(want0.category, want0.title) : CATEGORIES.food.subs[0],
+    title: want0?.title ?? '',
     description: '',
     quantity: 1,
     mode: 'free',
@@ -51,6 +55,7 @@ export default function PostPage() {
 
   if (!user) return <Loading />;
   const today = ymdLocal(nowOf(d));
+  const want = want0 && wantOpen(want0, nowOf(d)) && want0.userId !== user.id ? want0 : null;
   const location = f.location ?? pos.point;
   const input: NewListingInput = { ...f, location };
   const flagged = findBannedWords(`${f.title} ${f.description} ${f.swapWish}`, d.site.bannedWords);
@@ -101,13 +106,22 @@ export default function PostPage() {
     if (e) return setError(e);
     setPublishing(true);
     const r = await actions.createListing(input);
-    setPublishing(false);
-    if (!r.ok) return setError(r.error);
+    if (!r.ok) {
+      setPublishing(false);
+      return setError(r.error);
+    }
     const { status, reward } = r.value;
+    let answered = false;
+    if (want) {
+      const a = await actions.respondWant(want.id, r.value.id);
+      answered = a.ok;
+      if (!a.ok) toast(`已刊登，但沒有回應到徵求：${a.error}`, 'error');
+    }
+    setPublishing(false);
     toast(
       status === 'pending_review'
-        ? '已送出。內容有需要確認的字詞，審核通過後才會公開。'
-        : `刊登成功！${reward ? `獲得首次刊登獎勵 ${reward} 點` : ''}`,
+        ? `已送出。內容有需要確認的字詞，審核通過後才會公開${answered && IS_REMOTE ? '，並通知徵求的人' : ''}。`
+        : `刊登成功！${answered ? '已回應徵求。' : ''}${reward ? `獲得首次刊登獎勵 ${reward} 點` : ''}`,
       status === 'pending_review' ? 'info' : 'success',
     );
     router.push(listingPath(r.value.id));
@@ -154,6 +168,19 @@ export default function PostPage() {
           </li>
         ))}
       </ol>
+
+      {want && (
+        <p className="mb-4 flex items-start gap-2 rounded-2xl border border-violet-200 bg-violet-50 p-3 text-sm text-violet-900">
+          <PackageSearch className="mt-0.5 size-4 shrink-0" />
+          <span>
+            回應 {userById(d, want.userId)?.name ?? '對方'} 的徵求
+            <Link href={wantPath(want.id)} className="font-semibold underline">
+              「{want.title}」
+            </Link>
+            ，發布後{IS_REMOTE ? '會寄 Email 通知對方' : '會顯示在徵求頁'}。
+          </span>
+        </p>
+      )}
 
       <div className="card space-y-5 p-5">
         {step === 0 && (
@@ -455,5 +482,14 @@ export default function PostPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// useSearchParams needs a Suspense boundary in a static export.
+export default function PostPage() {
+  return (
+    <Suspense>
+      <PostForm />
+    </Suspense>
   );
 }

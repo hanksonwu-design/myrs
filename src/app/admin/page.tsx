@@ -28,11 +28,12 @@ import {
   ratingOf,
   useDB,
   userById,
+  wantById,
 } from '@/lib/store';
 import { activeWithin } from '@/lib/search';
 import { PILOT_CENTER, PILOT_NAME } from '@/lib/geo';
 import { DAY, formatDate, formatDateTime, timeAgo } from '@/lib/format';
-import { announcementOn, LISTING_STATUS_LABEL, MODE_LABEL, ORDER_STATUS_LABEL } from '@/lib/rules';
+import { announcementOn, LISTING_STATUS_LABEL, MODE_LABEL, ORDER_STATUS_LABEL, wantStatusLabel } from '@/lib/rules';
 import { IS_REMOTE } from '@/lib/backend';
 import { activeSuspension, formatUntil, hasLevel, isStaff, LEVEL_DUTIES, LEVEL_LABEL, levelOf } from '@/lib/staff';
 import type { AdminLevel, DB, LedgerEntry, MailItem, MailStatus, Settings, User } from '@/lib/types';
@@ -42,7 +43,7 @@ import { Avatar, Loading, Modal, ModeBadge } from '@/components/ui';
 import { useRequireLogin } from '@/components/hooks';
 import { PointsHealth } from '@/components/PointsHealth';
 import { useToast } from '@/components/Providers';
-import { listingPath, userPath } from '@/lib/links';
+import { listingPath, userPath, wantPath } from '@/lib/links';
 
 type Tab = 'dash' | 'listings' | 'reports' | 'disputes' | 'users' | 'mail' | 'settings' | 'log';
 
@@ -285,7 +286,7 @@ function Reports({ d, me }: { d: DB; me: User }) {
   for (const r of open) groups.set(r.targetId, [...(groups.get(r.targetId) ?? []), r]);
   if (!groups.size) return <p className="card p-6 text-center text-sm text-slate-500">沒有待處理的檢舉。</p>;
 
-  const run = async (id: string, action: 'dismiss' | 'remove_listing' | 'suspend_user', done: string) => {
+  const run = async (id: string, action: 'dismiss' | 'remove_listing' | 'remove_want' | 'suspend_user', done: string) => {
     const r = await actions.adminHandleReport(id, action);
     toast(r.ok ? done : r.error, r.ok ? 'success' : 'error');
   };
@@ -295,16 +296,28 @@ function Reports({ d, me }: { d: DB; me: User }) {
       {[...groups.values()].map((rs) => {
         const first = rs[0];
         const l = first.targetType === 'listing' ? listingById(d, first.targetId) : null;
-        const target = first.targetType === 'user' ? userById(d, first.targetId) : l ? userById(d, l.ownerId) : null;
+        const w = first.targetType === 'want' ? wantById(d, first.targetId) : null;
+        const target =
+          first.targetType === 'user'
+            ? userById(d, first.targetId)
+            : l
+              ? userById(d, l.ownerId)
+              : w
+                ? userById(d, w.userId)
+                : null;
         return (
           <li key={first.targetId} className="card p-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">
-                {first.targetType === 'listing' ? '刊登' : '使用者'}
+                {first.targetType === 'listing' ? '刊登' : first.targetType === 'want' ? '徵求' : '使用者'}
               </span>
               {l ? (
                 <Link href={listingPath(l.id)} className="font-bold hover:underline">
                   {l.title}
+                </Link>
+              ) : w ? (
+                <Link href={wantPath(w.id)} className="font-bold hover:underline">
+                  {w.title}
                 </Link>
               ) : (
                 <Link href={userPath(target?.id)} className="font-bold hover:underline">
@@ -312,6 +325,7 @@ function Reports({ d, me }: { d: DB; me: User }) {
                 </Link>
               )}
               {l && <span className="text-xs text-slate-500">（{LISTING_STATUS_LABEL[l.status]}・{target?.name}）</span>}
+              {w && <span className="text-xs text-slate-500">（{wantStatusLabel(w, nowOf(d))}・{target?.name}）</span>}
               <span className="ml-auto text-xs text-slate-400">{rs.length} 筆檢舉</span>
             </div>
             <ul className="mt-2 space-y-1 text-sm">
@@ -333,6 +347,11 @@ function Reports({ d, me }: { d: DB; me: User }) {
                   <button className="btn btn-danger py-1.5" onClick={() => run(first.id, 'remove_listing', '已下架刊登')}>
                     下架刊登
                   </button>
+              )}
+              {w && w.status !== 'removed' && (
+                <button className="btn btn-danger py-1.5" onClick={() => run(first.id, 'remove_want', '已移除徵求')}>
+                  移除徵求
+                </button>
               )}
               {target && hasLevel(me, 'admin') && target.role !== 'admin' && target.status === 'active' && (
                 <button
@@ -539,9 +558,12 @@ function UserAdmin({ d, me }: { d: DB; me: User }) {
   );
 }
 
-/** Reports filed against a member or any of their listings. */
+/** Reports filed against a member or any of their listings and wants. */
 function reportsAgainst(d: DB, userId: string) {
-  const mine = new Set(d.listings.filter((l) => l.ownerId === userId).map((l) => l.id));
+  const mine = new Set([
+    ...d.listings.filter((l) => l.ownerId === userId).map((l) => l.id),
+    ...d.wants.filter((w) => w.userId === userId).map((w) => w.id),
+  ]);
   return d.reports.filter((r) => (r.targetType === 'user' ? r.targetId === userId : mine.has(r.targetId)));
 }
 
@@ -843,6 +865,9 @@ function UserDetail({ d, me, u }: { d: DB; me: User; u: User }) {
                 <p>
                   {r.targetType === 'listing' && (
                     <span className="text-slate-500">刊登「{listingById(d, r.targetId)?.title}」：</span>
+                  )}
+                  {r.targetType === 'want' && (
+                    <span className="text-slate-500">徵求「{wantById(d, r.targetId)?.title}」：</span>
                   )}
                   {r.reason}
                 </p>

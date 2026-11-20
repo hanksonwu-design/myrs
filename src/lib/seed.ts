@@ -1,6 +1,6 @@
 import { calcFee, DEFAULT_SETTINGS, DEFAULT_SITE } from './rules';
 import { DAY, HOUR, ymdLocal } from './format';
-import type { DB, LedgerEntry, Listing, Message, Order, Review, User } from './types';
+import type { DB, LedgerEntry, Listing, Message, Order, Review, User, Want } from './types';
 
 export const DB_VERSION = 1;
 
@@ -448,6 +448,7 @@ export function createSeed(now: number): DB {
     sessionUserId: null,
     users,
     listings,
+    wants: seedWants(now),
     orders,
     ledger,
     messages,
@@ -461,4 +462,45 @@ export function createSeed(now: number): DB {
     suspensions: [],
     site: { ...DEFAULT_SITE, bannedWords: [...DEFAULT_SITE.bannedWords] },
   };
+}
+
+/** Demo wants (徵求). Also added to demo data saved before wants existed. */
+export function seedWants(now: number): Want[] {
+  const want = (
+    id: string,
+    userId: string,
+    hoursAgo: number,
+    data: Pick<Want, 'category' | 'title' | 'description' | 'location' | 'areaLabel'>,
+  ): Want => ({
+    id,
+    userId,
+    status: 'open',
+    createdAt: now - hoursAgo * HOUR,
+    expiresAt: now - hoursAgo * HOUR + 14 * DAY,
+    closedAt: null,
+    ...data,
+  });
+  return [
+    want('w_coat', 'u_lin', 5, {
+      category: 'clothing',
+      title: '130cm 男童冬季外套',
+      description: '老大長高了，去年的外套穿不下。有帽子更好，二手沒關係。',
+      location: { lat: 25.0318, lng: 121.5312 },
+      areaLabel: '永康街附近',
+    }),
+    want('w_milk', 'u_chen', 20, {
+      category: 'food',
+      title: '即期鮮奶（做優格用）',
+      description: '一兩瓶就好，明天到期的也可以。',
+      location: { lat: 25.0262, lng: 121.5433 },
+      areaLabel: '捷運科技大樓站附近',
+    }),
+    want('w_suit', 'u_wang', 30, {
+      category: 'clothing',
+      title: '深色西裝外套 M（面試用）',
+      description: '下週要面試，想借穿或換一件。可以用我的二手書交換。',
+      location: { lat: 25.0257, lng: 121.5287 },
+      areaLabel: '師大路附近',
+    }),
+  ];
 }

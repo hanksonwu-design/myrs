@@ -15,6 +15,8 @@ import {
   useDB,
   userById,
 } from '@/lib/store';
+import { answersOf, WantIcon, wantTimeLeft } from '@/components/WantVisuals';
+import { wantOpen, wantStatusLabel } from '@/lib/rules';
 import { LISTING_STATUS_LABEL, RADIUS_OPTIONS } from '@/lib/rules';
 import type { Category } from '@/lib/types';
 import { formatDate, maskPhone, timeAgo } from '@/lib/format';
@@ -24,7 +26,7 @@ import { useMyPosition, useRequireLogin } from '@/components/hooks';
 import { TrustBadge } from '@/components/TrustBadge';
 import { useToast } from '@/components/Providers';
 import { IS_REMOTE } from '@/lib/backend';
-import { listingPath } from '@/lib/links';
+import { listingPath, wantPath } from '@/lib/links';
 
 export default function MePage() {
   const d = useDB()!;
@@ -46,6 +48,10 @@ export default function MePage() {
   const now = nowOf(d);
   const rating = ratingOf(d, user.id);
   const myListings = d.listings.filter((l) => l.ownerId === user.id).sort((a, b) => b.createdAt - a.createdAt);
+  const myWants = d.wants
+    .filter((w) => w.userId === user.id)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 10);
   const reviews = d.reviews.filter((r) => r.revieweeId === user.id && reviewPublished(d, r));
   const blocked = user.blocked.map((id) => userById(d, id)).filter(Boolean);
   const others = d.users.filter((u) => u.status === 'active' && u.id !== user.id);
@@ -142,6 +148,37 @@ export default function MePage() {
                     </p>
                   </div>
                   <ModeBadge listing={l} />
+                  <ChevronRight className="size-4 text-slate-300" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="card p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="font-bold">我的徵求</h2>
+          <Link href="/wants/new" className="text-sm font-semibold text-brand">
+            ＋ 發徵求
+          </Link>
+        </div>
+        {myWants.length === 0 ? (
+          <p className="text-sm text-slate-500">找不到想要的東西？發一則徵求，附近剛好有的人可以刊登給你。</p>
+        ) : (
+          <ul className="divide-y divide-slate-100">
+            {myWants.map((w) => (
+              <li key={w.id}>
+                <Link href={wantPath(w.id)} className="flex items-center gap-3 py-2.5">
+                  <WantIcon want={w} className="size-12" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">{w.title}</p>
+                    <p className="text-xs text-slate-500">
+                      {wantStatusLabel(w, now)}
+                      {wantOpen(w, now) && `・${wantTimeLeft(w, now)}`} · {answersOf(d, w.id, user.id).length} 個回應 ·{' '}
+                      {timeAgo(w.createdAt, now)}
+                    </p>
+                  </div>
                   <ChevronRight className="size-4 text-slate-300" />
                 </Link>
               </li>

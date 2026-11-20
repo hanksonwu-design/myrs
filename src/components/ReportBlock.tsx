@@ -9,7 +9,9 @@ import { useToast } from './Providers';
 
 const REASONS = ['違禁品或不允許的食品', '疑似詐騙或轉賣', '內容與實物不符', '騷擾或不當言語', '其他'];
 
-export function ReportButton({ targetType, targetId }: { targetType: 'listing' | 'user'; targetId: string }) {
+const NOUN = { listing: '刊登', user: '使用者', want: '徵求' } as const;
+
+export function ReportButton({ targetType, targetId }: { targetType: keyof typeof NOUN; targetId: string }) {
   const d = useDB()!;
   const router = useRouter();
   const toast = useToast();
@@ -25,7 +27,7 @@ export function ReportButton({ targetType, targetId }: { targetType: 'listing' |
     setBusy(false);
     if (!r.ok) return toast(r.error, 'error');
     setOpen(false);
-    toast(r.value ? '已收到檢舉，這則刊登先暫時下架等待審核' : '已收到檢舉，管理員會盡快處理');
+    toast(r.value ? `已收到檢舉，這則${NOUN[targetType]}先暫時隱藏等待審核` : '已收到檢舉，管理員會盡快處理');
   };
 
   return (
@@ -37,7 +39,11 @@ export function ReportButton({ targetType, targetId }: { targetType: 'listing' |
         <Flag className="size-4" />
         檢舉
       </button>
-      <Modal open={open} title={targetType === 'listing' ? '檢舉這則刊登' : '檢舉這位使用者'} onClose={() => setOpen(false)}>
+      <Modal
+        open={open}
+        title={targetType === 'user' ? '檢舉這位使用者' : `檢舉這則${NOUN[targetType]}`}
+        onClose={() => setOpen(false)}
+      >
         <div className="space-y-2">
           {REASONS.map((r) => (
             <label key={r} className="flex items-center gap-2 rounded-xl border border-slate-200 p-3 text-sm">
@@ -54,7 +60,9 @@ export function ReportButton({ targetType, targetId }: { targetType: 'listing' |
           value={detail}
           onChange={(e) => setDetail(e.target.value)}
         />
-        <p className="mt-2 text-xs text-slate-500">同一則刊登被 {d.settings.reportHideThreshold} 位以上使用者檢舉會自動下架待審。</p>
+        <p className="mt-2 text-xs text-slate-500">
+          同一則刊登或徵求被 {d.settings.reportHideThreshold} 位以上使用者檢舉，會先自動隱藏，等管理團隊確認。
+        </p>
         <button className="btn btn-primary mt-4 w-full" disabled={busy} onClick={submit}>
           送出檢舉
         </button>

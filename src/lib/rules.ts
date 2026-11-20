@@ -1,4 +1,4 @@
-import type { Category, ListingStatus, Mode, OrderStatus, Settings, SiteInfo } from './types';
+import type { Category, ListingStatus, Mode, OrderStatus, Settings, SiteInfo, Want } from './types';
 
 export const DEFAULT_SETTINGS: Settings = {
   feeRate: 0.1,
@@ -22,6 +22,23 @@ export const CATEGORIES: Record<Category, { label: string; subs: string[] }> = {
   food: { label: '食', subs: ['即期品', '包裝食品', '生鮮蔬果'] },
   clothing: { label: '衣', subs: ['上衣', '下身', '外套', '童裝', '鞋子', '包包配件'] },
 };
+
+// Best guess of a sub-category from a title, e.g. when a listing answers a want (徵求).
+const SUB_HINTS: [string, RegExp][] = [
+  ['外套', /外套|大衣|夾克|羽絨|風衣/],
+  ['鞋子', /鞋|靴/],
+  ['包包配件', /包包|背包|提袋|帽|圍巾|手套|皮帶|飾品/],
+  ['下身', /褲|裙/],
+  ['童裝', /童|寶寶|嬰兒|幼兒/],
+  ['上衣', /衣|衫|T恤|毛衣|帽T/],
+  ['即期品', /即期|快到期|鮮奶|牛奶|麵包|吐司/],
+  ['生鮮蔬果', /菜|果|蔬|蛋|肉|魚|地瓜|番茄/],
+  ['包裝食品', /罐頭|零食|餅乾|泡麵|米|麵|調味|飲料/],
+];
+export function guessSub(category: Category, title: string): string {
+  const subs = CATEGORIES[category].subs;
+  return SUB_HINTS.find(([sub, re]) => subs.includes(sub) && re.test(title))?.[0] ?? subs[0];
+}
 
 export const STORAGE_OPTIONS = ['常溫', '冷藏', '冷凍'];
 
@@ -49,6 +66,22 @@ export const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
 };
 
 export const RADIUS_OPTIONS = [1, 3, 5, 10];
+
+/** Wanted posts (徵求): the same limits the server checks (migration 9). */
+export const WANT_DAYS = 14;
+export const WANT_MAX_OPEN = 3;
+export const WANT_DAILY_MAX = 5;
+export const WANT_MAX_ANSWERS = 3;
+
+/** Whether others can see and answer a want now. */
+export const wantOpen = (w: Want, now: number) => w.status === 'open' && w.expiresAt > now;
+
+export function wantStatusLabel(w: Want, now: number): string {
+  if (w.status === 'removed') return '已移除';
+  if (w.status === 'hidden') return '審核中';
+  if (w.status === 'closed') return '已結束';
+  return w.expiresAt > now ? '徵求中' : '已過期';
+}
 
 // Words that send a listing to manual review (doc section 10).
 export const BANNED_WORDS = [

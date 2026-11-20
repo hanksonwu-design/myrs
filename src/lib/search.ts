@@ -1,6 +1,7 @@
 import { distanceKm, publicLocationOf } from './geo';
 import { isBlockedBetween, ratingOf, userById } from './store';
-import type { Category, DB, LatLng, Listing, Mode } from './types';
+import { wantOpen } from './rules';
+import type { Category, DB, LatLng, Listing, Mode, Want } from './types';
 
 export interface SearchOptions {
   center: LatLng;
@@ -43,6 +44,33 @@ export function searchListings(d: DB, o: SearchOptions): SearchHit[] {
     if (Math.abs(byTime) > 6 * 3_600_000) return byTime;
     return ratingOf(d, b.listing.ownerId).avg - ratingOf(d, a.listing.ownerId).avg;
   });
+  return hits;
+}
+
+export interface WantHit {
+  want: Want;
+  distance: number;
+}
+
+/** Open wants near a point, nearest (or newest) first. */
+export function searchWants(d: DB, o: Omit<SearchOptions, 'mode'>, now: number): WantHit[] {
+  const q = o.q.trim().toLowerCase();
+  const hits: WantHit[] = [];
+  for (const w of d.wants) {
+    if (!wantOpen(w, now)) continue;
+    if (userById(d, w.userId)?.status !== 'active') continue;
+    if (o.viewerId && isBlockedBetween(d, o.viewerId, w.userId)) continue;
+    if (o.category !== 'all' && w.category !== o.category) continue;
+    if (q && !`${w.title} ${w.description} ${w.areaLabel}`.toLowerCase().includes(q)) continue;
+    const distance = distanceKm(o.center, w.location);
+    if (distance > o.radiusKm) continue;
+    hits.push({ want: w, distance });
+  }
+  hits.sort((a, b) =>
+    o.sort === 'new'
+      ? b.want.createdAt - a.want.createdAt
+      : Math.round(a.distance * 4) - Math.round(b.distance * 4) || b.want.createdAt - a.want.createdAt,
+  );
   return hits;
 }
 
